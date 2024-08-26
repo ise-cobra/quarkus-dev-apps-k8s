@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd" child.project.url.inherit.append.path="false">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.quarkiverse</groupId>
+    <artifactId>quarkiverse-parent</artifactId>
+    <version>16</version>
+  </parent>
+
+  <groupId>com.ise112.quarkus</groupId>
+  <artifactId>quarkus-dev-apps-k8s-parent</artifactId>
+  <name>Quarkus Dev Apps K8s - Parent</name>
+  <version>1.0.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <description>A Quarkus extension to start dependent services in a Kubernetes cluster during quarkus dev mode</description>
+  <url>https://github.com/ise-cobra/quarkus-dev-apps-k8s</url>
+
+  <developers>
+    <developer>
+      <id>iSE</id>
+      <name>iSE</name>
+      <organization>iSE GmbH</organization>
+      <organizationUrl>https://www.ise-cobra.de</organizationUrl>
+    </developer>
+  </developers>
+
+  <licenses>
+    <license>
+      <name>The Apache Software License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <scm>
+    <url>https://github.com/ise-cobra/quarkus-dev-apps-k8s</url>
+    <connection>scm:git:git@github.com/ise-cobra/quarkus-dev-apps-k8s.git</connection>
+    <developerConnection>scm:git:git@github.com/ise-cobra/quarkus-dev-apps-k8s.git</developerConnection>
+    <tag>HEAD</tag>
+  </scm>
+
+  <issueManagement>
+    <system>GitHub</system>
+    <url>https://github.com/ise-cobra/quarkus-dev-apps-k8s/issues/</url>
+  </issueManagement>
+
+  <properties>
+    <compiler-plugin.version>3.12.1</compiler-plugin.version>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <quarkus.version>3.2.11.Final</quarkus.version>
+
+    <smallrye-connector-attribute-processor.version>4.18.0</smallrye-connector-attribute-processor.version>
+    <smallrye-reactive-messaging-otel.version>4.18.0</smallrye-reactive-messaging-otel.version>
+    <microprofile-config-api.version>3.1</microprofile-config-api.version>
+    <assertj-core.version>3.25.3</assertj-core.version>
+    <surefire-plugin.version>3.0.0-M9</surefire-plugin.version>
+    <lombok.version>1.18.30</lombok.version>
+  </properties>
+
+  <modules>
+    <module>deployment</module>
+    <module>runtime</module>
+  </modules>
+
+  <repositories>
+    <repository>
+      <id>central</id>
+      <name>Maven Central Repository</name>
+      <url>https://repo.maven.apache.org/maven2</url>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </repository>
+  </repositories>
+
+  <distributionManagement>
+    <snapshotRepository>
+      <id>github</id>
+      <url>https://maven.pkg.github.com/ise-cobra/quarkus-dev-apps-k8s</url>
+    </snapshotRepository>
+    <repository>
+      <id>github</id>
+      <url>https://maven.pkg.github.com/ise-cobra/quarkus-dev-apps-k8s</url>
+    </repository>
+  </distributionManagement>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.quarkus</groupId>
+        <artifactId>quarkus-bom</artifactId>
+        <version>${quarkus.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.smallrye.reactive</groupId>
+        <artifactId>smallrye-reactive-messaging-otel</artifactId>
+        <version>${smallrye-reactive-messaging-otel.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.assertj</groupId>
+        <artifactId>assertj-core</artifactId>
+        <version>${assertj-core.version}</version>
+        <scope>test</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>io.quarkus</groupId>
+          <artifactId>quarkus-maven-plugin</artifactId>
+          <version>${quarkus.version}</version>
+        </plugin>
+        <plugin>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>${compiler-plugin.version}</version>
+          <configuration>
+            <compilerArgs>
+              <arg>-parameters</arg>
+            </compilerArgs>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+    <plugins>
+      <plugin>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>${surefire-plugin.version}</version>
+        <configuration>
+          <systemPropertyVariables>
+            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+            <quarkus.log.level>DEBUG</quarkus.log.level>
+            <maven.home>${maven.home}</maven.home>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+      <plugin>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <version>${surefire-plugin.version}</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>verify</goal>
+            </goals>
+            <configuration>
+              <systemPropertyVariables>
+                <native.image.path>${project.build.directory}/${project.build.finalName}-runner</native.image.path>
+                <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                <maven.home>${maven.home}</maven.home>
+              </systemPropertyVariables>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+  <profiles>
+    <profile>
+      <id>it</id>
+      <activation>
+        <property>
+          <name>performRelease</name>
+          <value>!true</value>
+        </property>
+      </activation>
+    </profile>
+  </profiles>
+</project>
+

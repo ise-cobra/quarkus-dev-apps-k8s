@@ -1,0 +1,17 @@
+
+:summaryTableId: quarkus-dev-apps-k8s
+[.configuration-legend]
+icon:lock[title=Fixed at build time] Configuration property fixed at build time - All other configuration properties are overridable at runtime
+[.configuration-reference.searchable, cols="80,.^10,.^10"]
+|===
+
+h|[[quarkus-dev-apps-k8s_configuration]]link:#quarkus-dev-apps-k8s_configuration[Configuration property]
+
+h|Type
+h|Default
+
+a|icon:lock[title=Fixed at build time] [[quarkus-dev-apps-k8s_quarkus.url]]`link:#quarkus-dev-apps-k8s_quarkus.url[quarkus.url]`
+
+
+[.description]
+--
