@@ -73,10 +73,4 @@ public interface K8sDevServicesBuildTimeConfig {
      */
     @WithDefault("quarkus-dev-apps")
     String sshPassword();
-
-    /**
-     * The name of the ssh pod to use
-     */
-    @WithDefault("quarkus-dev-ssh")
-    String sshPodName();
 }
