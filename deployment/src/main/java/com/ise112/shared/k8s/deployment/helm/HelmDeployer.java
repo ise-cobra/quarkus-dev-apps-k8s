@@ -1,6 +1,8 @@
 package com.ise112.shared.k8s.deployment.helm;
 
 import java.io.Closeable;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
@@ -23,6 +25,7 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import io.fabric8.kubernetes.client.internal.KubeConfigUtils;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem.RunningDevService;
+import io.quarkus.deployment.pkg.builditem.BuildSystemTargetBuildItem;
 
 @ApplicationScoped
 public class HelmDeployer implements Closeable {
@@ -38,23 +41,33 @@ public class HelmDeployer implements Closeable {
 
     private RunningDevService devService;
 
-    public RunningDevService startServices(K8sDevServicesBuildTimeConfig config) {
+    public RunningDevService startServices(BuildSystemTargetBuildItem bst, K8sDevServicesBuildTimeConfig config) {
         if (devService != null) {
             // currently no update of configuration implemented
             return devService;
         }
         this.config = config;
-        kubeConfigPath = Path.of("target", "kubeconfig.yaml");
+        kubeConfigPath = bst.getOutputDirectory().resolve("kubeconfig.yaml");
         saveKubeConfig(config.kubeContext(), kubeConfigPath);
 
-        helm = new Helm(Paths.get(config.chartPath()));
-        if (config.stopCleanRestart()) {
-            uninstall();
-        }
-        upgradeDeployment();
+        try {
+            helm = new Helm(Paths.get(config.chartPath()));
+            if (config.stopCleanRestart()) {
+                uninstall();
+            }
+            upgradeDeployment();
 
-        devService = new RunningDevService(K8sDevServicesProcessor.FEATURE, null, this::close, Collections.emptyMap());
-        return devService;
+            devService = new RunningDevService(K8sDevServicesProcessor.FEATURE, null, this::close,
+                    Collections.emptyMap());
+            return devService;
+        } finally {
+            // Kubeconfig should be deleted as soon, as we don't need it anymore, so no secret information gets accidentally leaked
+            try {
+                Files.delete(kubeConfigPath);
+            } catch (IOException e) {
+                // can be ignored
+            }
+        }
     }
 
     @Override

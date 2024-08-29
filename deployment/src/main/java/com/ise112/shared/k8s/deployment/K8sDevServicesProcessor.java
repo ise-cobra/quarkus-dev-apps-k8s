@@ -20,6 +20,7 @@ import io.quarkus.deployment.console.ConsoleInstalledBuildItem;
 import io.quarkus.deployment.console.StartupLogCompressor;
 import io.quarkus.deployment.dev.devservices.GlobalDevServicesConfig;
 import io.quarkus.deployment.logging.LoggingSetupBuildItem;
+import io.quarkus.deployment.pkg.builditem.BuildSystemTargetBuildItem;
 
 @BuildSteps(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
 public class K8sDevServicesProcessor {
@@ -33,6 +34,7 @@ public class K8sDevServicesProcessor {
     public void startK8sDevService(
             K8sDevServicesBuildTimeConfig config,
             CuratedApplicationShutdownBuildItem closeBuildItem,
+            BuildSystemTargetBuildItem bst,
             Optional<ConsoleInstalledBuildItem> consoleInstalledBuildItem,
             LoggingSetupBuildItem loggingSetupBuildItem,
             BuildProducer<DevServicesResultBuildItem> producer) {
@@ -54,7 +56,7 @@ public class K8sDevServicesProcessor {
                         if (helmDeployer == null) {
                             helmDeployer = new HelmDeployer();
                         }
-                        RunningDevService helmDevService = helmDeployer.startServices(config);
+                        RunningDevService helmDevService = helmDeployer.startServices(bst, config);
                         producer.produce(helmDevService.toBuildItem());
                     }),
                     CompletableFuture.runAsync(() -> {

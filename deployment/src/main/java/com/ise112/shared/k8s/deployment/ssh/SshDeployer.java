@@ -32,11 +32,15 @@ import com.jcraft.jsch.Session;
 import io.fabric8.kubernetes.api.model.ContainerPort;
 import io.fabric8.kubernetes.api.model.ContainerPortBuilder;
 import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import io.fabric8.kubernetes.client.LocalPortForward;
+import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.PodResource;
+import io.fabric8.kubernetes.client.dsl.Resource;
+import io.fabric8.kubernetes.client.dsl.ServiceResource;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem.RunningDevService;
 
 public class SshDeployer implements Closeable {
@@ -98,21 +102,12 @@ public class SshDeployer implements Closeable {
                 .withName("ssh")
                 .build());
 
-        String sshPodYaml;
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("sshpod.yaml")) {
-            sshPodYaml = IOUtils.toString(is, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-
-        sshPodYaml = sshPodYaml.formatted(config.namespace(), config.sshImage(), config.sshUsername(),
+        PodResource podResource = getResource(k8sClient.pods(), "sshpod.yaml",
+                config.namespace(),
+                config.sshImage(),
+                config.sshUsername(),
                 config.sshPassword());
-        PodResource podResource;
-        try (InputStream is = new ByteArrayInputStream(sshPodYaml.getBytes())) {
-            podResource = k8sClient.pods().load(is);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+
         Pod podInstance = podResource.get();
         if (podInstance == null) {
             podResource.create();
@@ -151,7 +146,8 @@ public class SshDeployer implements Closeable {
         try {
             int localSshPort = getFreePort();
 
-            // It can take quite some time before the ssh server is really ready to accept connections, therefore retry some times...
+            // It can take quite some time before the ssh server is really ready to accept
+            // connections, therefore retry some times...
             int retryCount = 30;
             for (int i = 0; i < retryCount && session == null; i++) {
                 LocalPortForward portForward = null;
@@ -184,35 +180,72 @@ public class SshDeployer implements Closeable {
             ObjectMapper yamlMapper = new ObjectMapper(
                     new YAMLFactory().disable(YAMLGenerator.Feature.USE_NATIVE_TYPE_ID));
             JsonNode valuesYaml = yamlMapper.readTree(valuesYamlPath.toFile());
-            List<JSchException> errors = Optional.of(valuesYaml.get("portforwarding"))
+            List<Exception> errors = Optional.of(valuesYaml.get("portforwarding"))
                     .map(n -> n.get("services"))
                     .map(s -> StreamSupport.stream(s.spliterator(), false)
-                            .map(e -> {
-                                try {
-                                    String name = e.get("name").asText();
-                                    int localPort = e.get("localPort").asInt();
-                                    int servicePort = e.get("service").get("port").asInt();
-                                    String serviceName = e.get("service").get("name").asText();
-                                    int realPort = session.setPortForwardingL(localPort, serviceName, servicePort);
-                                    overrideConfigs.put(name + ".url", "localhost:" + realPort);
-                                    log.infof("Port forwarding active for %s on %d", name, realPort);
-                                } catch (JSchException exc) {
-                                    return exc;
-                                }
-                                return null;
-                            }).filter(e -> e != null).toList())
+                            .map(e -> createPortForwarding(overrideConfigs, e))
+                            .filter(e -> e != null)
+                            .toList())
                     .orElseGet(() -> Collections.emptyList());
 
             if (!errors.isEmpty()) {
                 throw errors.get(0);
             }
+
+            errors = Optional.of(valuesYaml.get("portforwarding"))
+                    .map(n -> n.get("reverseProxy"))
+                    .map(s -> StreamSupport.stream(s.spliterator(), false)
+                            .map(e -> createReverseProxy(config, e))
+                            .filter(e -> e != null)
+                            .toList())
+                    .orElseGet(() -> Collections.emptyList());
         } catch (JSchException e) {
             log.warnf("Failed to establish ssh connection:", e);
             throw new RuntimeException(e);
         } catch (IOException e) {
             log.warnf("Failed to read values.yaml:", e);
             throw new RuntimeException(e);
+        } catch (Exception e) {
+            log.warnf("Error during connect ssh:", e);
+            throw new RuntimeException(e);
         }
+    }
+
+    private Exception createPortForwarding(Map<String, String> overrideConfigs, JsonNode e) {
+        try {
+            String name = e.get("name").asText();
+            int localPort = e.get("localPort").asInt();
+            int servicePort = e.get("service").get("port").asInt();
+            String serviceName = e.get("service").get("name").asText();
+            int realPort = session.setPortForwardingL(localPort, serviceName, servicePort);
+            overrideConfigs.put(name + ".url", "localhost:" + realPort);
+            log.infof("Port forwarding active for %s on %d", name, realPort);
+        } catch (JSchException exc) {
+            return exc;
+        }
+        return null;
+    }
+
+    private Exception createReverseProxy(K8sDevServicesBuildTimeConfig config, JsonNode e) {
+
+        try {
+            int localPort = e.get("localPort").asInt();
+            int servicePort = e.get("service").get("port").asInt();
+            String serviceName = e.get("service").get("name").asText();
+            session.setPortForwardingR("0.0.0.0", servicePort, "localhost", localPort);
+            log.infof("Reverse proxy active for service %s:%d to local port %", serviceName, servicePort, localPort);
+
+            ServiceResource<Service> serviceResource = getResource(k8sClient.services(), "sshservice.yaml",
+                    serviceName,
+                    config.namespace(),
+                    servicePort,
+                    servicePort);
+            serviceResource.serverSideApply();
+
+        } catch (JSchException exc) {
+            return exc;
+        }
+        return null;
     }
 
     private Session getSshSession(K8sDevServicesBuildTimeConfig config, int localSshPort) throws JSchException {
@@ -223,5 +256,23 @@ public class SshDeployer implements Closeable {
 
         session.connect(15000);
         return session;
+    }
+
+    private <T extends Resource<?>> T getResource(MixedOperation<?, ?, T> loader, String yamlFile, Object... args) {
+        String sshPodYaml;
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream(yamlFile)) {
+            sshPodYaml = IOUtils.toString(is, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        sshPodYaml = sshPodYaml.formatted(args);
+        T resource;
+        try (InputStream is = new ByteArrayInputStream(sshPodYaml.getBytes())) {
+            resource = loader.load(is);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        return resource;
     }
 }
