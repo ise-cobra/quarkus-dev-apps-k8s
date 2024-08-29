@@ -5,12 +5,12 @@ import io.quarkus.runtime.annotations.ConfigRoot;
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
 
-@ConfigMapping(prefix = "ise.dev.messaging.k8s.devservices")
+@ConfigMapping(prefix = "ise.dev.k8s.devservices")
 @ConfigRoot(phase = ConfigPhase.BUILD_TIME)
 public interface K8sDevServicesBuildTimeConfig {
 
     /**
-     * If Dev Services for K8S JetStream has been explicitly enabled or disabled.
+     * If Dev Services for K8S has been explicitly enabled or disabled.
      * Dev Services are generally enabled
      * by default, unless there is an existing configuration present.
      */
@@ -18,7 +18,7 @@ public interface K8sDevServicesBuildTimeConfig {
     boolean enabled();
 
     /**
-     * If Dev Services for K8S JetStream has been explicitly enabled or disabled.
+     * If Dev Services for K8S has been explicitly enabled or disabled.
      * Dev Services are generally enabled
      * by default, unless there is an existing configuration present.
      */
@@ -26,7 +26,7 @@ public interface K8sDevServicesBuildTimeConfig {
     String chartPath();
 
     /**
-     * If Dev Services for K8S JetStream has been explicitly enabled or disabled.
+     * If Dev Services for K8S has been explicitly enabled or disabled.
      * Dev Services are generally enabled
      * by default, unless there is an existing configuration present.
      */

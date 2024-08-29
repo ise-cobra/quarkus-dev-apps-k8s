@@ -65,9 +65,8 @@ public class SshDeployer implements Closeable {
                     .build();
         }
 
-        int localPort = getFreePort();
-        deploySshPod(config, localPort);
-        connectSSH(config, localPort, overrideConfigs);
+        deploySshPod(config);
+        connectSSH(config, overrideConfigs);
 
         return new RunningDevService(K8sDevServicesProcessor.FEATURE, null, this::close, overrideConfigs);
     }
@@ -90,8 +89,8 @@ public class SshDeployer implements Closeable {
         }
     }
 
-    private void deploySshPod(K8sDevServicesBuildTimeConfig config, int localSshPort) {
-        log.infof("Starting SSH tunnel with port %d", localSshPort);
+    private void deploySshPod(K8sDevServicesBuildTimeConfig config) {
+        log.infof("Starting SSH pod...");
 
         List<ContainerPort> ports = new ArrayList<>();
         ports.add(new ContainerPortBuilder()
@@ -132,20 +131,6 @@ public class SshDeployer implements Closeable {
                 .inNamespace(config.namespace())
                 .withName(SSH_POD_NAME)
                 .isReady());
-
-        // Give a little extra time for the pod, otherwise the ssh connection fails.
-        // Don't know why.
-        try {
-            Thread.sleep(5000);
-        } catch (InterruptedException e) {
-        }
-
-        LocalPortForward portForward = k8sClient.pods().inNamespace(config.namespace())
-                .withName(SSH_POD_NAME)
-                .portForward(2222, localSshPort);
-        if (!portForward.isAlive()) {
-            log.warn("Portforwarding to SSH pod did not succeed!");
-        }
     }
 
     private boolean similarPods(PodResource podResource, Pod podInstance) {
@@ -161,15 +146,38 @@ public class SshDeployer implements Closeable {
         }
     }
 
-    private void connectSSH(K8sDevServicesBuildTimeConfig config, int localSshPort,
+    private void connectSSH(K8sDevServicesBuildTimeConfig config,
             Map<String, String> overrideConfigs) {
         try {
-            log.infof("Connecting ssh on port %d", localSshPort);
-            session = new JSch().getSession(config.sshUsername(), "127.0.0.1", localSshPort);
-            session.setPassword(config.sshPassword());
-            session.setConfig("StrictHostKeyChecking", "no");
+            int localSshPort = getFreePort();
 
-            session.connect(15000);
+            // It can take quite some time before the ssh server is really ready to accept connections, therefore retry some times...
+            int retryCount = 30;
+            for (int i = 0; i < retryCount && session == null; i++) {
+                LocalPortForward portForward = null;
+                try {
+                    portForward = k8sClient.pods().inNamespace(config.namespace())
+                            .withName(SSH_POD_NAME)
+                            .portForward(2222, localSshPort);
+                    if (!portForward.isAlive()) {
+                        log.warn("Portforwarding to SSH pod did not succeed!");
+                    }
+                    session = getSshSession(config, localSshPort);
+                } catch (Exception e) {
+                    if (portForward != null) {
+                        portForward.close();
+                    }
+                    if (i < retryCount - 1) {
+                        log.warnf("Tunnel to k8s cluster failed, retrying %d/%d", (i + 1), retryCount);
+                        try {
+                            Thread.sleep(1000);
+                        } catch (Exception ie) {
+                        }
+                    } else {
+                        throw e;
+                    }
+                }
+            }
 
             log.infof("Starting Port Forwarding for tunnels");
             Path valuesYamlPath = Path.of(config.chartPath(), "values.yaml");
@@ -205,5 +213,15 @@ public class SshDeployer implements Closeable {
             log.warnf("Failed to read values.yaml:", e);
             throw new RuntimeException(e);
         }
+    }
+
+    private Session getSshSession(K8sDevServicesBuildTimeConfig config, int localSshPort) throws JSchException {
+        log.infof("Connecting ssh on port %d", localSshPort);
+        Session session = new JSch().getSession(config.sshUsername(), "127.0.0.1", localSshPort);
+        session.setPassword(config.sshPassword());
+        session.setConfig("StrictHostKeyChecking", "no");
+
+        session.connect(15000);
+        return session;
     }
 }
