@@ -2,10 +2,12 @@ package com.ise112.shared.k8s.deployment.helm;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.Objects;
 
@@ -13,6 +15,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 
 import org.jboss.logging.Logger;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Strings;
 import com.ise112.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
 import com.ise112.shared.k8s.deployment.K8sDevServicesProcessor;
 import com.ise112.shared.k8s.deployment.ssh.SshDeployer;
@@ -20,6 +26,8 @@ import com.ise112.shared.k8s.deployment.utils.K8sDevServicesUtils;
 import com.marcnuri.helm.Helm;
 
 import io.fabric8.kubernetes.api.model.NamedContext;
+import io.fabric8.kubernetes.api.model.NamespaceBuilder;
+import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
@@ -55,13 +63,16 @@ public class HelmDeployer implements Closeable {
             if (config.stopCleanRestart()) {
                 uninstall();
             }
+            installSecret();
+            helmRegistryLogin();
             upgradeDeployment();
 
             devService = new RunningDevService(K8sDevServicesProcessor.FEATURE, null, this::close,
                     Collections.emptyMap());
             return devService;
         } finally {
-            // Kubeconfig should be deleted as soon, as we don't need it anymore, so no secret information gets accidentally leaked
+            // Kubeconfig should be deleted after we don't need it anymore, so no secret
+            // information gets accidentally leaked
             try {
                 Files.delete(kubeConfigPath);
             } catch (IOException e) {
@@ -74,6 +85,72 @@ public class HelmDeployer implements Closeable {
     public void close() {
         if (config.shutdown()) {
             uninstall();
+        }
+    }
+
+    /**
+     * There might be the requirement to have a secret installed into kubernetes, to
+     * access some images. This should be done with a registry secret type
+     */
+    private void installSecret() {
+        String registrySecret = config.registrySecret().orElse(null);
+        if (Strings.isNullOrEmpty(registrySecret)) {
+            return;
+        }
+        Config k8sConfig = Config.autoConfigure(config.kubeContext());
+        try (KubernetesClient k8sClient = new KubernetesClientBuilder()
+                .withConfig(k8sConfig)
+                .build()) {
+
+            String credentials = Base64.getEncoder()
+                    .encodeToString(registrySecret.getBytes(StandardCharsets.UTF_8));
+
+            log.infof("Creating or patching registry secret %s/%s", config.namespace(), config.registrySecretName());
+
+            k8sClient.namespaces()
+                    .resource(new NamespaceBuilder()
+                            .withNewMetadata()
+                            .withName(config.namespace())
+                            .endMetadata()
+                            .build())
+                    .serverSideApply();
+            k8sClient.secrets()
+                    .resource(new SecretBuilder()
+                            .withNewMetadata()
+                            .withName(config.registrySecretName())
+                            .withNamespace(config.namespace())
+                            .endMetadata()
+                            .withData(Collections.singletonMap(".dockerconfigjson", credentials))
+                            .withType("kubernetes.io/dockerconfigjson")
+                            .build())
+                    .serverSideApply();
+        }
+    }
+
+    private void helmRegistryLogin() {
+        String registrySecret = config.registrySecret().orElse(null);
+        if (Strings.isNullOrEmpty(registrySecret)) {
+            return;
+        }
+        try {
+            JsonNode json = new ObjectMapper().readTree(registrySecret);
+            JsonNode auths = json.get("auths");
+            if (auths == null) {
+                throw new RuntimeException("No \"auths\" field found in registry secret");
+            }
+            auths.fields().forEachRemaining(auth -> {
+                String host = auth.getKey();
+                JsonNode value = auth.getValue();
+                String username = value.get("username") != null ? value.get("username").asText() : null;
+                String password = value.get("password") != null ? value.get("password").asText() : null;
+                Helm.registry().login()
+                        .withHost(host)
+                        .withUsername(username)
+                        .withPassword(password)
+                        .call();
+            });
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Could not parse registry secret, is it valid json?", e);
         }
     }
 
@@ -112,7 +189,7 @@ public class HelmDeployer implements Closeable {
 
     private void upgradeDeployment() {
         long time = System.currentTimeMillis();
-        helm.dependency().build();
+        helm.dependency().update().call();
         log.infof("Time for dependency build: %d", (System.currentTimeMillis() - time));
         time = System.currentTimeMillis();
         helm.upgrade()

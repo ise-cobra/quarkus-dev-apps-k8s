@@ -31,6 +31,7 @@ import com.jcraft.jsch.Session;
 
 import io.fabric8.kubernetes.api.model.ContainerPort;
 import io.fabric8.kubernetes.api.model.ContainerPortBuilder;
+import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.client.Config;
@@ -101,6 +102,15 @@ public class SshDeployer implements Closeable {
                 .withContainerPort(22)
                 .withName("ssh")
                 .build());
+
+        // make sure the namespace exists before deploying anything
+        k8sClient.namespaces()
+                .resource(new NamespaceBuilder()
+                        .withNewMetadata()
+                        .withName(config.namespace())
+                        .endMetadata()
+                        .build())
+                .serverSideApply();
 
         PodResource podResource = getResource(k8sClient.pods(), "sshpod.yaml",
                 config.namespace(),

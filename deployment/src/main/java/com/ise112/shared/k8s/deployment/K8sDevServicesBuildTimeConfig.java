@@ -1,5 +1,7 @@
 package com.ise112.shared.k8s.deployment;
 
+import java.util.Optional;
+
 import io.quarkus.runtime.annotations.ConfigPhase;
 import io.quarkus.runtime.annotations.ConfigRoot;
 import io.smallrye.config.ConfigMapping;
@@ -38,6 +40,28 @@ public interface K8sDevServicesBuildTimeConfig {
      */
     @WithDefault("dev-services")
     String namespace();
+
+    /**
+     * The secret to access required registries. Also used for helm chart
+     * dependencies. Must be in the form
+     * <code>
+     * {
+     *     "auths": {
+     *         "registry.example.org": {
+     *             "username":"user",
+     *             "password":"token"
+     *         }
+     *     }
+     * }
+     * </code>
+     */
+    Optional<String> registrySecret();
+
+    /**
+     * The name of the registry secret in the cluster.
+     */
+    @WithDefault("registry-secret")
+    String registrySecretName();
 
     /**
      * Whether the whole deployed dev context should be stopped and cleaned before
