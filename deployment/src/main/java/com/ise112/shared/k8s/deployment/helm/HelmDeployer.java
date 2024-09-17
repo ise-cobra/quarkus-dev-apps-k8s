@@ -54,7 +54,11 @@ public class HelmDeployer implements Closeable {
     private static volatile RunningDevService devService;
 
     @BuildStep
-    public DevServicesResultBuildItem startServices(BuildSystemTargetBuildItem bst, K8sDevServicesBuildTimeConfig config) {
+    public DevServicesResultBuildItem startServices(BuildSystemTargetBuildItem bst,
+            K8sDevServicesBuildTimeConfig config) {
+        if (!config.enabled()) {
+            return null;
+        }
         if (devService != null) {
             // currently no update of configuration implemented
             return devService.toBuildItem();
@@ -163,9 +167,9 @@ public class HelmDeployer implements Closeable {
      * Helm requires a kubeconfig file and can't set a kube context here. Therefore
      * we must export the required kube context into a file and load it from there.
      *
-     * @param kubeContext the kubernetes context to use
+     * @param kubeContext    the kubernetes context to use
      * @param kubeConfigPath path to which the kubernetes config should be written
-     * @param config the kubernetes config read by fabric8
+     * @param config         the kubernetes config read by fabric8
      */
     private void saveKubeConfig(String kubeContext, Path kubeConfigPath) {
 

@@ -64,7 +64,7 @@ public class PortsConfiguration {
         private String serviceName;
 
         public String getJschString() {
-            return servicePort + ":localhost:" + localPort;
+            return localPort + ":localhost:" + localPort;
         }
     }
 

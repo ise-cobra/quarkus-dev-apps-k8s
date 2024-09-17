@@ -74,6 +74,9 @@ public class SshDeployer implements Closeable {
 
     @BuildStep
     public DevServicesResultBuildItem clusterConnection(K8sDevServicesBuildTimeConfig config) {
+        if (!config.enabled()) {
+            return null;
+        }
         if (devService != null) {
             // currently no update of configuration implemented
             return devService.toBuildItem();
@@ -365,7 +368,7 @@ public class SshDeployer implements Closeable {
         // SSH tunnel from cluster to localhost
         K8sDevServicesUtils.createAndWatch(() -> {
             try {
-                session.setPortForwardingR("0.0.0.0", p.getServicePort(), "localhost", p.getLocalPort());
+                session.setPortForwardingR("0.0.0.0", p.getLocalPort(), "localhost", p.getLocalPort());
                 log.infof("Reverse proxy active for service %s:%d to local port %d", p.getServiceName(),
                         p.getServicePort(), p.getLocalPort());
             } catch (JSchException e) {
@@ -392,7 +395,7 @@ public class SshDeployer implements Closeable {
                 p.getServiceName(),
                 config.namespace(),
                 p.getServicePort(),
-                p.getServicePort());
+                p.getLocalPort());
         // Service creation inside the cluster
         K8sDevServicesUtils.createAndWatch(() -> {
             serviceResource.createOr(t -> t.patch());
