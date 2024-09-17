@@ -6,6 +6,7 @@ import io.quarkus.runtime.annotations.ConfigPhase;
 import io.quarkus.runtime.annotations.ConfigRoot;
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
+import io.smallrye.config.WithName;
 
 @ConfigMapping(prefix = "ise.dev.k8s.devservices")
 @ConfigRoot(phase = ConfigPhase.BUILD_TIME)
@@ -36,10 +37,27 @@ public interface K8sDevServicesBuildTimeConfig {
     String kubeContext();
 
     /**
-     * The namespace into which everything should be deployed
+     * The namespace into which everything should be deployed.
      */
     @WithDefault("dev-services")
     String namespace();
+
+    /**
+     * Whether the helm deployed should be enabled, true by default.
+     * It may be disabled if you want to develop two services at the same time and
+     * connect to the existing deployments of another instance running.
+     */
+    @WithDefault("true")
+    @WithName("helm.enabled")
+    boolean helmEnabled();
+
+    /**
+     * If set to true, the extension will continue even it if fails to establish
+     * port forwardings from/to the cluster. This may be useful if an extensions is
+     * already running and provides the same ports.
+     */
+    @WithDefault("false")
+    boolean ignorePortFailures();
 
     /**
      * The secret to access required registries. Also used for helm chart

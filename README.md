@@ -61,11 +61,11 @@ portforwarding:
       service:
         port: 80
         name: keycloak
-  reverse: 
-    - localPort: 8080
+  reverseProxy:
+    - localPort: ${quarkus.http.port}
       service:
         port: 8080
-        name: keycloak
+        name: quarkus-app
 
 postgresql:
   fullnameOverride: postgresql
@@ -107,6 +107,120 @@ keycloak:
 
 The section `portforwarding` is a special section evaluated by the extension itself and manages, which ports should be forwarded from localhost to which services in the cluster.
 
+## Port forwarding
 
+To communicate with the services in the cluster, the block `portforwarding` in the cluster will be used. This block is evaluated from the extension and creates tunnels to and from the cluster.
 
+There are two tunnel types: into the cluster, called `services` (as they connect to the services) and `reverseProxy` to provide access to a local service.
 
+### Service Tunnels
+
+The service tunnels are configured the following way:
+
+```yaml
+portforwarding:
+  services:
+    - name: keycloak
+      localPort: 8081
+      service:
+        name: keycloak
+        port: 80
+```
+
+Where the variables are defined as followed:
+
+| Variable | Definition |
+|----------|------------|
+| name | Used for variable overrding during quarkus startup, a variable `${name}.url` with the url to the target will be provided. |
+| localPort | The port on which the service should be accessible locally. If 0, a random port will be used. |
+| service.name | The name of the service in the k8s cluster to connect with. |
+| service.port | The port of the service in the k8s cluster to connect with. |
+
+### Reverse proxy
+
+If a service inside of the cluster needs to communicate with your application, you can be provide a tunnel from the cluster to the local environment:
+
+```yaml
+portforwarding:
+  reverseProxy: 
+    - localPort: ${quarkus.http.port}
+      service:
+        port: 8080
+        name: quarkus-app
+```
+
+With this, a service will be created whose port will be forwarded to the local port.
+
+| Variable | Definition |
+|----------|------------|
+| localPort | The local port which should be exposed to the cluster. |
+| service.name | The name of the service in the k8s cluster whose port should be forwarded to your local environment. |
+| service.port | The port of the service in the k8s cluster which should be forwarded to your local environment. |
+
+Known limitations: currently, there can be only one port per service. So even if you define multiple of them in different objects, the service will still only forward a single port.
+
+## Developing at two Quarkus apps at the same time
+
+There may be cases, where you are developing two Quarkus applications at the same time, e.g. app A communicates with app B.
+
+In the standard case, you have in app A configured, that app B should be started automatically as a pod with this extension and in app B, that it should start app A. When developing against each other you want to start the environment only once and don't change anything in the configuration.
+
+In this case the optimal solution is to have for both apps the same helm chart deployment but different port forwardings and in the cluster a service for app A and B, which is then forwarded to the local apps.
+
+App A:
+
+`Chart.yaml`:
+
+```yaml
+apiVersion: v2
+name: ise-dev
+version: 0.0.1
+appVersion: 0.0.1
+type: application
+```
+
+`values.yaml`:
+
+```yaml
+portforwarding:
+  services:
+    - name: B
+      localPort: 0
+      service:
+        port: 8080
+        name: appb
+  reverseProxy: 
+    - localPort: ${quarkus.http.port}
+      service:
+        port: 8080
+        name: appa
+```
+
+App B:
+
+`Chart.yaml`:
+
+```yaml
+apiVersion: v2
+name: ise-dev
+version: 0.0.1
+appVersion: 0.0.1
+type: application
+```
+
+`values.yaml`:
+
+```yaml
+portforwarding:
+  services:
+    - name: B
+      localPort: 0
+      service:
+        port: 8080
+        name: appa
+  reverseProxy: 
+    - localPort: ${quarkus.http.port}
+      service:
+        port: 8080
+        name: appb
+```

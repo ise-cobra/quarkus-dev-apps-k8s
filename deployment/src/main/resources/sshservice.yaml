@@ -7,7 +7,7 @@ metadata:
     com.ise112.quarkus.k8s: reverseproxy
 spec:
   selector:
-    app.kubernetes.io/name: quarkus-dev-ssh
+    app: quarkus-dev-ssh
   ports:
   - port: %d
     protocol: TCP

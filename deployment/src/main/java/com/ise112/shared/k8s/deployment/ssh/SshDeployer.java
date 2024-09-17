@@ -8,22 +8,20 @@ import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.stream.StreamSupport;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import org.apache.commons.io.IOUtils;
 import org.jboss.logging.Logger;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import com.ise112.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
-import com.ise112.shared.k8s.deployment.K8sDevServicesProcessor;
+import com.ise112.shared.k8s.deployment.ssh.PortsConfiguration.PortForwarding;
+import com.ise112.shared.k8s.deployment.ssh.PortsConfiguration.ReverseProxy;
 import com.ise112.shared.k8s.deployment.utils.K8sDevServicesUtils;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
@@ -31,37 +29,56 @@ import com.jcraft.jsch.Session;
 
 import io.fabric8.kubernetes.api.model.ContainerPort;
 import io.fabric8.kubernetes.api.model.ContainerPortBuilder;
+import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.api.model.Service;
+import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import io.fabric8.kubernetes.client.LocalPortForward;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
-import io.fabric8.kubernetes.client.dsl.PodResource;
 import io.fabric8.kubernetes.client.dsl.Resource;
+import io.fabric8.kubernetes.client.dsl.RollableScalableResource;
 import io.fabric8.kubernetes.client.dsl.ServiceResource;
+import io.quarkus.deployment.IsNormal;
+import io.quarkus.deployment.annotations.BuildStep;
+import io.quarkus.deployment.annotations.BuildSteps;
+import io.quarkus.deployment.builditem.DevServicesResultBuildItem;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem.RunningDevService;
+import io.quarkus.deployment.dev.devservices.GlobalDevServicesConfig;
 
+@BuildSteps(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
 public class SshDeployer implements Closeable {
     private static final Logger log = Logger.getLogger(SshDeployer.class);
 
-    public static final String SSH_POD_NAME = "quarkus-dev-ssh";
+    private static final String FEATURE = "K8sDevServicesSshTunnel";
 
-    private KubernetesClient k8sClient;
+    public static final String SSH_DEPLOYMENT_NAME = "quarkus-dev-ssh";
 
-    private RunningDevService devService;
+    private static volatile K8sDevServicesBuildTimeConfig config;
 
-    private Session session = null;
+    private static volatile KubernetesClient k8sClient;
 
-    public RunningDevService clusterConnection(K8sDevServicesBuildTimeConfig config) {
+    private static volatile RunningDevService devService;
+
+    private static volatile Session session = null;
+
+    private static volatile PortsConfiguration portsConfg;
+
+    private static volatile LocalPortForward portForward;
+
+    private static volatile ScheduledFuture<?> k8sFuture;
+
+    @BuildStep
+    public DevServicesResultBuildItem clusterConnection(K8sDevServicesBuildTimeConfig config) {
         if (devService != null) {
             // currently no update of configuration implemented
-            return devService;
+            return devService.toBuildItem();
         }
-
-        Map<String, String> overrideConfigs = new HashMap<>();
+        SshDeployer.config = config;
 
         if (k8sClient == null) {
             Config k8sConfig = Config.autoConfigure(config.kubeContext());
@@ -70,21 +87,17 @@ public class SshDeployer implements Closeable {
                     .build();
         }
 
-        deploySshPod(config);
-        connectSSH(config, overrideConfigs);
+        deploySsh();
+        Map<String, String> overrideConfigs = connectSSH();
 
-        return new RunningDevService(K8sDevServicesProcessor.FEATURE, null, this::close, overrideConfigs);
+        devService = new RunningDevService(FEATURE, null, this::close, overrideConfigs);
+
+        return devService.toBuildItem();
     }
 
     @Override
     public void close() throws IOException {
-        if (session != null) {
-            try {
-                session.disconnect();
-            } catch (Exception e) {
-                log.warn("Error during closing ssh connection for dev apps k8s:", e);
-            }
-        }
+        closeSsh();
         if (k8sClient != null) {
             try {
                 k8sClient.close();
@@ -94,7 +107,28 @@ public class SshDeployer implements Closeable {
         }
     }
 
-    private void deploySshPod(K8sDevServicesBuildTimeConfig config) {
+    private void closeSsh() {
+        if (session != null) {
+            Session tempSession = session;
+            session = null;
+            // Make sure, all port forwardings are deleted to free the local ports,
+            // otherwise they are still blocked
+            try {
+                for (String pf : tempSession.getPortForwardingL()) {
+                    tempSession.delPortForwardingL(Integer.parseInt(pf.split(":")[0]));
+                }
+                for (String rp : tempSession.getPortForwardingR()) {
+                    String[] split = rp.split(":");
+                    tempSession.delPortForwardingR(split[1], Integer.parseInt(split[0]));
+                }
+            } catch (JSchException e) {
+                log.warn("Cloud not close all port forwardings:", e);
+            }
+            tempSession.disconnect();
+        }
+    }
+
+    private void deploySsh() {
         log.infof("Starting SSH pod...");
 
         List<ContainerPort> ports = new ArrayList<>();
@@ -104,43 +138,69 @@ public class SshDeployer implements Closeable {
                 .build());
 
         // make sure the namespace exists before deploying anything
+        Namespace namespace = new NamespaceBuilder()
+                .withNewMetadata()
+                .withName(config.namespace())
+                .endMetadata()
+                .build();
         k8sClient.namespaces()
-                .resource(new NamespaceBuilder()
-                        .withNewMetadata()
-                        .withName(config.namespace())
-                        .endMetadata()
-                        .build())
-                .serverSideApply();
+                .resource(namespace)
+                .createOr(t -> namespace);
 
-        PodResource podResource = getResource(k8sClient.pods(), "sshpod.yaml",
+        RollableScalableResource<Deployment> deploymentResource = getResource(k8sClient.apps().deployments(),
+                "sshdeploy.yaml",
                 config.namespace(),
                 config.sshImage(),
                 config.sshUsername(),
                 config.sshPassword());
 
-        Pod podInstance = podResource.get();
-        if (podInstance == null) {
-            podResource.create();
-        } else if (!similarPods(podResource, podInstance)) {
-            podResource.delete();
-            // Wait till the ssh pod is deleted
-            K8sDevServicesUtils.waitTill(5 * 60000, () -> k8sClient.pods()
-                    .inNamespace(config.namespace())
-                    .withName(SSH_POD_NAME)
-                    .get() != null);
-            podResource.create();
+        Path valuesYamlPath = Path.of(config.chartPath(), "values.yaml");
+        portsConfg = PortsConfiguration.parseConfig(valuesYamlPath);
+
+        addPorts(deploymentResource);
+
+        deploymentResource.createOr(t -> t.patch());
+
+        // Kubernetes might need a short time, before it triggers the recalculation of
+        // the replicaset, give it a little bit of time, otherwise we might connect to
+        // an old pod
+        try {
+            Thread.sleep(2000);
+        } catch (InterruptedException e) {
         }
 
-        // Wait till ssh pod is in ready state
-        K8sDevServicesUtils.waitTill(5 * 60000, () -> k8sClient.pods()
+        // Wait till ssh deployment is in ready state
+        K8sDevServicesUtils.waitTill(5 * 60000, () -> k8sClient.apps()
+                .deployments()
                 .inNamespace(config.namespace())
-                .withName(SSH_POD_NAME)
+                .withName(SSH_DEPLOYMENT_NAME)
                 .isReady());
     }
 
-    private boolean similarPods(PodResource podResource, Pod podInstance) {
-        // TODO: check whether the configurations are the same
-        return true;
+    private void addPorts(RollableScalableResource<Deployment> deploymentResource) {
+        Deployment deployment = deploymentResource.get();
+        List<Integer> existingPorts = deployment.getSpec().getTemplate()
+                .getSpec().getContainers().stream()
+                .flatMap(c -> c.getPorts().stream())
+                // All other properties than the port number are dismissed by purpose
+                .map(cp -> cp.getContainerPort())
+                .toList();
+
+        List<Integer> proxyPorts = portsConfg.getReverseProxies().stream()
+                .map(p -> p.getServicePort())
+                .toList();
+
+        List<ContainerPort> ports = Stream.concat(proxyPorts.stream(), existingPorts.stream())
+                .distinct()
+                .map(p -> new ContainerPortBuilder()
+                        .withContainerPort(p)
+                        .build())
+                .toList();
+
+        deploymentResource.edit()
+                .getSpec().getTemplate()
+                .getSpec().getContainers()
+                .get(0).edit().addAllToPorts(ports);
     }
 
     private int getFreePort() {
@@ -151,8 +211,7 @@ public class SshDeployer implements Closeable {
         }
     }
 
-    private void connectSSH(K8sDevServicesBuildTimeConfig config,
-            Map<String, String> overrideConfigs) {
+    private Map<String, String> connectSSH() {
         try {
             int localSshPort = getFreePort();
 
@@ -160,125 +219,206 @@ public class SshDeployer implements Closeable {
             // connections, therefore retry some times...
             int retryCount = 30;
             for (int i = 0; i < retryCount && session == null; i++) {
-                LocalPortForward portForward = null;
                 try {
-                    portForward = k8sClient.pods().inNamespace(config.namespace())
-                            .withName(SSH_POD_NAME)
-                            .portForward(2222, localSshPort);
-                    if (!portForward.isAlive()) {
-                        log.warn("Portforwarding to SSH pod did not succeed!");
-                    }
-                    session = getSshSession(config, localSshPort);
+                    createK8sTunnel(localSshPort);
+                    createSshSession(config, localSshPort);
                 } catch (Exception e) {
-                    if (portForward != null) {
-                        portForward.close();
-                    }
                     if (i < retryCount - 1) {
                         log.warnf("Tunnel to k8s cluster failed, retrying %d/%d", (i + 1), retryCount);
                         try {
                             Thread.sleep(1000);
-                        } catch (Exception ie) {
+                        } catch (Exception e2) {
                         }
                     } else {
-                        throw e;
+                        throw new RuntimeException(e);
                     }
                 }
             }
 
-            log.infof("Starting Port Forwarding for tunnels");
-            Path valuesYamlPath = Path.of(config.chartPath(), "values.yaml");
-            ObjectMapper yamlMapper = new ObjectMapper(
-                    new YAMLFactory().disable(YAMLGenerator.Feature.USE_NATIVE_TYPE_ID));
-            JsonNode valuesYaml = yamlMapper.readTree(valuesYamlPath.toFile());
-            List<Exception> errors = Optional.of(valuesYaml.get("portforwarding"))
-                    .map(n -> n.get("services"))
-                    .map(s -> StreamSupport.stream(s.spliterator(), false)
-                            .map(e -> createPortForwarding(overrideConfigs, e))
-                            .filter(e -> e != null)
-                            .toList())
-                    .orElseGet(() -> Collections.emptyList());
-
+            Map<String, String> overrideConfigs = new HashMap<>();
+            List<Exception> errors = portsConfg.getPortForwardings().stream()
+                    .map(p -> createPortForwarding(overrideConfigs, p))
+                    .filter(e -> e != null)
+                    .toList();
+            if (!errors.isEmpty()) {
+                throw errors.get(0);
+            }
+            errors = portsConfg.getReverseProxies().stream()
+                    .map(p -> createReverseProxy(p))
+                    .filter(e -> e != null)
+                    .toList();
             if (!errors.isEmpty()) {
                 throw errors.get(0);
             }
 
-            errors = Optional.of(valuesYaml.get("portforwarding"))
-                    .map(n -> n.get("reverseProxy"))
-                    .map(s -> StreamSupport.stream(s.spliterator(), false)
-                            .map(e -> createReverseProxy(config, e))
-                            .filter(e -> e != null)
-                            .toList())
-                    .orElseGet(() -> Collections.emptyList());
+            return overrideConfigs;
         } catch (JSchException e) {
-            log.warnf("Failed to establish ssh connection:", e);
+            log.warn("Failed to establish ssh connection", e);
             throw new RuntimeException(e);
         } catch (IOException e) {
-            log.warnf("Failed to read values.yaml:", e);
+            log.warn("Failed to read values.yaml", e);
             throw new RuntimeException(e);
         } catch (Exception e) {
-            log.warnf("Error during connect ssh:", e);
+            log.warn("Error during connect ssh", e);
             throw new RuntimeException(e);
         }
     }
 
-    private Exception createPortForwarding(Map<String, String> overrideConfigs, JsonNode e) {
-        try {
-            String name = e.get("name").asText();
-            int localPort = e.get("localPort").asInt();
-            int servicePort = e.get("service").get("port").asInt();
-            String serviceName = e.get("service").get("name").asText();
-            int realPort = session.setPortForwardingL(localPort, serviceName, servicePort);
-            overrideConfigs.put(name + ".url", "localhost:" + realPort);
-            log.infof("Port forwarding active for %s on %d", name, realPort);
-        } catch (JSchException exc) {
-            return exc;
+    private void createK8sTunnel(int localSshPort) {
+        if (k8sFuture != null) {
+            k8sFuture.cancel(false);
         }
+        Pod[] sshPod = new Pod[1];
+        k8sFuture = K8sDevServicesUtils.createAndWatch(() -> {
+            if (portForward != null) {
+                try {
+                    portForward.close();
+                } catch (Exception e2) {
+                }
+            }
+            PodList podList = k8sClient.pods()
+                    .inNamespace(config.namespace())
+                    .withLabel("app", SSH_DEPLOYMENT_NAME)
+                    .list();
+            if (podList.getItems().size() > 1) {
+                throw new IllegalStateException("More than one ssh pod found, did not start correctly?");
+            }
+            sshPod[0] = podList.getItems().get(0);
+            portForward = k8sClient.pods()
+                    .inNamespace(config.namespace())
+                    .withName(sshPod[0].getMetadata().getName())
+                    .portForward(2222, localSshPort);
+            if (!portForward.isAlive()) {
+                log.warn("Portforwarding to SSH pod did not succeed!");
+            }
+        }, () -> {
+            if (!portForward.isAlive()) {
+                return false;
+            }
+            // isAlive returns true, even if the target pod is already deleted
+            if (k8sClient.pods()
+                    .inNamespace(config.namespace())
+                    .withName(sshPod[0].getMetadata().getName()).get() == null) {
+                return false;
+            }
+            return true;
+        }, 10, TimeUnit.SECONDS);
+    }
+
+    private void createSshSession(K8sDevServicesBuildTimeConfig config, int localSshPort) throws JSchException {
+        K8sDevServicesUtils.createAndWatch(() -> {
+            closeSsh();
+            log.infof("Connecting ssh on port %d", localSshPort);
+            try {
+                session = new JSch().getSession(config.sshUsername(), "127.0.0.1", localSshPort);
+                session.setPassword(config.sshPassword());
+                session.setConfig("StrictHostKeyChecking", "no");
+                session.connect(15000);
+            } catch (JSchException e) {
+                throw new RuntimeException("Could not initiate SSH session", e);
+            }
+        }, () -> {
+            if (session == null || !session.isConnected()) {
+                return false;
+            }
+            try {
+                session.sendKeepAliveMsg();
+            } catch (Exception e) {
+                return false;
+            }
+            return true;
+        }, 10, TimeUnit.SECONDS);
+    }
+
+    private Exception createPortForwarding(Map<String, String> overrideConfigs, PortForwarding pf) {
+        // Real port should be used again, if the connection is lost
+        K8sDevServicesUtils.createAndWatch(() -> {
+            try {
+                pf.setRealPort(
+                        session.setPortForwardingL(pf.getRealLocalPort(), pf.getServiceName(), pf.getServicePort()));
+                overrideConfigs.put(pf.getName() + ".url", "localhost:" + pf.getRealLocalPort());
+                log.infof("Port forwarding active for %s on %d", pf.getName(), pf.getRealLocalPort());
+            } catch (JSchException exc) {
+                log.warnf(exc, "Failed to create port forwarding for %s:", pf.getName());
+            }
+        }, () -> {
+            // Checks whether the connection is still established
+            try {
+                String[] portForwardings = session.getPortForwardingL();
+                String ourconfig = pf.getJschString();
+                if (!Arrays.stream(portForwardings).anyMatch(ourconfig::equals)) {
+                    log.warnf("SSH port forwarding lost, trying to recreate for %s on %d", pf.getName(),
+                            pf.getRealLocalPort());
+                    return false;
+                }
+            } catch (JSchException e) {
+                log.warnf("SSH port forwarding lost, trying to recreate for %s on %d", pf.getName(),
+                        pf.getRealLocalPort());
+                return false;
+            }
+            return true;
+        }, 10, TimeUnit.SECONDS);
         return null;
     }
 
-    private Exception createReverseProxy(K8sDevServicesBuildTimeConfig config, JsonNode e) {
+    private Exception createReverseProxy(ReverseProxy p) {
+        // SSH tunnel from cluster to localhost
+        K8sDevServicesUtils.createAndWatch(() -> {
+            try {
+                session.setPortForwardingR("0.0.0.0", p.getServicePort(), "localhost", p.getLocalPort());
+                log.infof("Reverse proxy active for service %s:%d to local port %d", p.getServiceName(),
+                        p.getServicePort(), p.getLocalPort());
+            } catch (JSchException e) {
+                log.warnf(e, "Could not create reverse proxy for service %s:%d to local port %d", p.getServiceName(),
+                        p.getServicePort(), p.getLocalPort());
+            }
+        }, () -> {
+            // Checks whether the connection is still established
+            try {
+                String[] portForwardings = session.getPortForwardingR();
+                String ourconfig = p.getJschString();
+                if (!Arrays.stream(portForwardings).anyMatch(ourconfig::equals)) {
+                    log.warnf("Lost reverse proxy connection for service %s:%d to local port %d", p.getServiceName(),
+                            p.getServicePort(), p.getLocalPort());
+                    return false;
+                }
+            } catch (JSchException e) {
+                return false;
+            }
+            return true;
+        }, 10, TimeUnit.SECONDS);
 
-        try {
-            int localPort = e.get("localPort").asInt();
-            int servicePort = e.get("service").get("port").asInt();
-            String serviceName = e.get("service").get("name").asText();
-            session.setPortForwardingR("0.0.0.0", servicePort, "localhost", localPort);
-            log.infof("Reverse proxy active for service %s:%d to local port %", serviceName, servicePort, localPort);
+        ServiceResource<Service> serviceResource = getResource(k8sClient.services(), "sshservice.yaml",
+                p.getServiceName(),
+                config.namespace(),
+                p.getServicePort(),
+                p.getServicePort());
+        // Service creation inside the cluster
+        K8sDevServicesUtils.createAndWatch(() -> {
+            serviceResource.createOr(t -> t.patch());
+        }, () -> {
+            // Easiest way here to just recreate it instead of real checking, wheter it
+            // still exists
+            serviceResource.createOr(t -> t.patch());
+            return true;
+        },
+                // TODO: should the time interval be configurable?
+                10, TimeUnit.SECONDS);
 
-            ServiceResource<Service> serviceResource = getResource(k8sClient.services(), "sshservice.yaml",
-                    serviceName,
-                    config.namespace(),
-                    servicePort,
-                    servicePort);
-            serviceResource.serverSideApply();
-
-        } catch (JSchException exc) {
-            return exc;
-        }
         return null;
-    }
-
-    private Session getSshSession(K8sDevServicesBuildTimeConfig config, int localSshPort) throws JSchException {
-        log.infof("Connecting ssh on port %d", localSshPort);
-        Session session = new JSch().getSession(config.sshUsername(), "127.0.0.1", localSshPort);
-        session.setPassword(config.sshPassword());
-        session.setConfig("StrictHostKeyChecking", "no");
-
-        session.connect(15000);
-        return session;
     }
 
     private <T extends Resource<?>> T getResource(MixedOperation<?, ?, T> loader, String yamlFile, Object... args) {
-        String sshPodYaml;
+        String yaml;
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(yamlFile)) {
-            sshPodYaml = IOUtils.toString(is, StandardCharsets.UTF_8);
+            yaml = IOUtils.toString(is, StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
 
-        sshPodYaml = sshPodYaml.formatted(args);
+        yaml = yaml.formatted(args);
         T resource;
-        try (InputStream is = new ByteArrayInputStream(sshPodYaml.getBytes())) {
+        try (InputStream is = new ByteArrayInputStream(yaml.getBytes())) {
             resource = loader.load(is);
         } catch (Exception e) {
             throw new RuntimeException(e);

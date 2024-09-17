@@ -11,8 +11,6 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.Objects;
 
-import jakarta.enterprise.context.ApplicationScoped;
-
 import org.jboss.logging.Logger;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -20,7 +18,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Strings;
 import com.ise112.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
-import com.ise112.shared.k8s.deployment.K8sDevServicesProcessor;
 import com.ise112.shared.k8s.deployment.ssh.SshDeployer;
 import com.ise112.shared.k8s.deployment.utils.K8sDevServicesUtils;
 import com.marcnuri.helm.Helm;
@@ -32,29 +29,37 @@ import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import io.fabric8.kubernetes.client.internal.KubeConfigUtils;
+import io.quarkus.deployment.IsNormal;
+import io.quarkus.deployment.annotations.BuildStep;
+import io.quarkus.deployment.annotations.BuildSteps;
+import io.quarkus.deployment.builditem.DevServicesResultBuildItem;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem.RunningDevService;
+import io.quarkus.deployment.dev.devservices.GlobalDevServicesConfig;
 import io.quarkus.deployment.pkg.builditem.BuildSystemTargetBuildItem;
 
-@ApplicationScoped
+@BuildSteps(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
 public class HelmDeployer implements Closeable {
     private static final String HELM_RELEASE_NAME = "quarkus-dev-k8s";
 
+    private static final String FEATURE = "K8sDevServicesSshTunnel";
+
     private static final Logger log = Logger.getLogger(HelmDeployer.class);
 
-    private K8sDevServicesBuildTimeConfig config;
+    private static volatile K8sDevServicesBuildTimeConfig config;
 
-    private Helm helm;
+    private static volatile Helm helm;
 
-    private Path kubeConfigPath;
+    private static volatile Path kubeConfigPath;
 
-    private RunningDevService devService;
+    private static volatile RunningDevService devService;
 
-    public RunningDevService startServices(BuildSystemTargetBuildItem bst, K8sDevServicesBuildTimeConfig config) {
+    @BuildStep
+    public DevServicesResultBuildItem startServices(BuildSystemTargetBuildItem bst, K8sDevServicesBuildTimeConfig config) {
         if (devService != null) {
             // currently no update of configuration implemented
-            return devService;
+            return devService.toBuildItem();
         }
-        this.config = config;
+        HelmDeployer.config = config;
         kubeConfigPath = bst.getOutputDirectory().resolve("kubeconfig.yaml");
         saveKubeConfig(config.kubeContext(), kubeConfigPath);
 
@@ -67,9 +72,9 @@ public class HelmDeployer implements Closeable {
             helmRegistryLogin();
             upgradeDeployment();
 
-            devService = new RunningDevService(K8sDevServicesProcessor.FEATURE, null, this::close,
+            devService = new RunningDevService(FEATURE, null, this::close,
                     Collections.emptyMap());
-            return devService;
+            return devService.toBuildItem();
         } finally {
             // Kubeconfig should be deleted after we don't need it anymore, so no secret
             // information gets accidentally leaked
@@ -214,7 +219,7 @@ public class HelmDeployer implements Closeable {
             K8sDevServicesUtils.waitTill(5 * 60000, () -> k8sClient.pods()
                     .inNamespace(config.namespace())
                     .resources()
-                    .filter(p -> !p.item().getMetadata().getName().equals(SshDeployer.SSH_POD_NAME))
+                    .filter(p -> (p.item().getMetadata().getLabels().get("app") != SshDeployer.SSH_DEPLOYMENT_NAME))
                     .allMatch(p -> p.isReady()));
         }
 

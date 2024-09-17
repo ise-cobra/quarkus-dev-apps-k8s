@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quarkus-dev-ssh
+  namespace: %s
+  labels:
+    app: quarkus-dev-ssh
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: quarkus-dev-ssh
+  template:
+    metadata:
+      labels:
+        app: quarkus-dev-ssh
+    spec:
+      initContainers:
+        - name: init-ssh-tunnel
+          image: busybox:1.28
+          env:
+            - name: SCRIPT
+              value: |
+                #!/usr/bin/with-contenv bash\n
+                # allow tcp forwarding within openssh settings\n
+                sed -i '/^AllowTcpForwarding/c\AllowTcpForwarding yes' /etc/ssh/sshd_config\n
+                sed -i '/^GatewayPorts/c\GatewayPorts clientspecified' /etc/ssh/sshd_config\n
+                echo "TcpForwarding is enabled"
+          command: ["sh", "-c", "echo $SCRIPT | sed 's/\\\\n */\\n/g' > /custom-cont-init.d/ssh-tunnel.sh"]
+          volumeMounts:
+            - mountPath: /custom-cont-init.d
+              name: init-script
+      containers:
+        - name: quarkus-dev-ssh
+          image: %s
+          env:
+            - name: PASSWORD_ACCESS
+              value: true
+            - name: USER_NAME
+              value: %s
+            - name: USER_PASSWORD
+              value: %s
+            # Docker mods may not work if behind corporate firewall
+            #- name: DOCKER_MODS
+            #  value: linuxserver/mods:openssh-server-ssh-tunnel
+          volumeMounts:
+            - mountPath: /custom-cont-init.d
+              name: init-script
+      automountServiceAccountToken: false
+      volumes:
+        - name: init-script
+          emptyDir:
