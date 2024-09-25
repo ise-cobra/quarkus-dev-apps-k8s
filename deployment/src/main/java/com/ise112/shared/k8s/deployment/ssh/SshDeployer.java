@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -182,12 +183,15 @@ public class SshDeployer implements Closeable {
 
     private void addPorts(RollableScalableResource<Deployment> deploymentResource) {
         Deployment deployment = deploymentResource.get();
-        List<Integer> existingPorts = deployment.getSpec().getTemplate()
-                .getSpec().getContainers().stream()
-                .flatMap(c -> c.getPorts().stream())
-                // All other properties than the port number are dismissed by purpose
-                .map(cp -> cp.getContainerPort())
-                .toList();
+        List<Integer> existingPorts = Collections.emptyList();
+        if (deployment != null) {
+            existingPorts = deployment.getSpec().getTemplate()
+                    .getSpec().getContainers().stream()
+                    .flatMap(c -> c.getPorts().stream())
+                    // All other properties than the port number are dismissed by purpose
+                    .map(cp -> cp.getContainerPort())
+                    .toList();
+        }
 
         List<Integer> proxyPorts = portsConfg.getReverseProxies().stream()
                 .map(p -> p.getServicePort())
@@ -200,10 +204,10 @@ public class SshDeployer implements Closeable {
                         .build())
                 .toList();
 
-        deploymentResource.edit()
+        deploymentResource.item()
                 .getSpec().getTemplate()
                 .getSpec().getContainers()
-                .get(0).edit().addAllToPorts(ports);
+                .get(0).getPorts().addAll(ports);
     }
 
     private int getFreePort() {
