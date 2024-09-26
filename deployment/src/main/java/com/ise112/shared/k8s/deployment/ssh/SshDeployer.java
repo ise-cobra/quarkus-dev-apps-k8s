@@ -86,6 +86,11 @@ public class SshDeployer implements Closeable {
 
         if (k8sClient == null) {
             Config k8sConfig = Config.autoConfigure(config.kubeContext());
+            // Nasty hack to avoid having the log be spammed with messages, if multiple
+            // configs are given in env variable, see
+            // https://github.com/fabric8io/kubernetes-client/issues/6240
+            // TODO: If above issue is fixed, this should be removed
+            k8sConfig.setAutoConfigure(false);
             k8sClient = new KubernetesClientBuilder()
                     .withConfig(k8sConfig)
                     .build();
@@ -158,8 +163,7 @@ public class SshDeployer implements Closeable {
                 config.sshUsername(),
                 config.sshPassword());
 
-        Path valuesYamlPath = Path.of(config.chartPath(), "values.yaml");
-        portsConfg = PortsConfiguration.parseConfig(valuesYamlPath);
+        portsConfg = PortsConfiguration.parseConfig(Path.of(config.chartPath()));
 
         addPorts(deploymentResource);
 
@@ -343,7 +347,8 @@ public class SshDeployer implements Closeable {
             try {
                 pf.setRealPort(
                         session.setPortForwardingL(pf.getRealLocalPort(), pf.getServiceName(), pf.getServicePort()));
-                overrideConfigs.put(pf.getName() + ".url", "localhost:" + pf.getRealLocalPort());
+                overrideConfigs.put(pf.getName() + ".host", "localhost");
+                overrideConfigs.put(pf.getName() + ".port", "" + pf.getRealLocalPort());
                 log.infof("Port forwarding active for %s on %d", pf.getName(), pf.getRealLocalPort());
             } catch (JSchException exc) {
                 log.warnf(exc, "Failed to create port forwarding for %s:", pf.getName());

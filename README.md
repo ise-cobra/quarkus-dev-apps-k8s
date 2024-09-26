@@ -224,3 +224,21 @@ portforwarding:
         port: 8080
         name: appb
 ```
+
+### Handling different configuration when working with two apps
+
+If you are developing two apps and they have different dependencies and you want to avoid having the one startup kill the deployments of the other you can also use multiple deployments by using the following structure:
+
+```folder
+├ quarkus-app
+├── src
+└── dev
+  ├── chart1
+  │ ├── Chart.yaml
+  │ └── values.yaml
+  └── chart2
+    ├── Chart.yaml
+    └── values.yaml
+```
+
+The quarkus extension will the deploy all the charts in the direct subfolders of the `dev` directory, as long as a `Chart.yaml` file exists there. The name of the deployment will be the folder name and the port configurations will be merged together from all `values.yaml`.

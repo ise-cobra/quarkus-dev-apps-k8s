@@ -1,12 +1,15 @@
 package com.ise112.shared.k8s.deployment.ssh;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 import org.eclipse.microprofile.config.ConfigProvider;
@@ -31,8 +34,6 @@ public class PortsConfiguration {
     private static final String NODE_SERVICES = "services";
 
     private static final String NODE_PORTFORWARDING = "portforwarding";
-
-    private Path valuesFile;
 
     private List<PortForwarding> portForwardings;
 
@@ -60,24 +61,50 @@ public class PortsConfiguration {
     @Getter
     public static class ReverseProxy {
         private int localPort;
-        private int servicePort;
         private String serviceName;
+        private int servicePort;
 
         public String getJschString() {
             return localPort + ":localhost:" + localPort;
         }
     }
 
-    private PortsConfiguration(Path valuesFile, List<PortForwarding> portForwardings,
+    private PortsConfiguration(List<PortForwarding> portForwardings,
             List<ReverseProxy> reverseProxies) {
-        this.valuesFile = valuesFile;
         this.portForwardings = portForwardings;
         this.reverseProxies = reverseProxies;
     }
 
-    public static PortsConfiguration parseConfig(Path valuesFile) {
+    public static PortsConfiguration parseConfig(Path chartsDir) {
         ObjectMapper yamlMapper = new ObjectMapper(
                 new YAMLFactory().disable(YAMLGenerator.Feature.USE_NATIVE_TYPE_ID));
+
+        // If a Chart.yaml is found in the dev directory, install this chart,
+        // otherwise check one more level whether they are charts to allow more
+        // installations
+        if (Files.exists(chartsDir.resolve("Chart.yaml"))) {
+            return parseConfig(yamlMapper, chartsDir.resolve("values.yaml"));
+        } else if (Files.exists(chartsDir)) {
+            try {
+                return Stream.concat(
+                        Stream.of(chartsDir.resolve("values.yaml")),
+                        Files.walk(chartsDir, 1))
+                        .filter(dir -> Files.exists(dir.resolve("values.yaml")))
+                        .map(dir -> parseConfig(yamlMapper, dir.resolve("values.yaml")))
+                        .reduce(new PortsConfiguration(new ArrayList<>(), new ArrayList<>()),
+                                (subtotal, element) -> {
+                                    subtotal.portForwardings.addAll(element.portForwardings);
+                                    subtotal.reverseProxies.addAll(element.reverseProxies);
+                                    return subtotal;
+                                });
+            } catch (IOException e) {
+                throw new RuntimeException("Error during finding values files", e);
+            }
+        }
+        return null;
+    }
+
+    private static PortsConfiguration parseConfig(ObjectMapper yamlMapper, Path valuesFile) {
         JsonNode valuesYaml;
         try {
             valuesYaml = yamlMapper.readTree(valuesFile.toFile());
@@ -115,7 +142,7 @@ public class PortsConfiguration {
                         .toList())
                 .orElseGet(() -> Collections.emptyList());
 
-        PortsConfiguration portsConfiguration = new PortsConfiguration(valuesFile, portForwardings, reverseProxies);
+        PortsConfiguration portsConfiguration = new PortsConfiguration(portForwardings, reverseProxies);
 
         return portsConfiguration;
     }
