@@ -36,6 +36,7 @@ import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodList;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
+import io.fabric8.kubernetes.api.model.apps.StatefulSet;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
@@ -408,14 +409,30 @@ public class SshDeployer implements Closeable {
         // Service creation inside the cluster
         K8sDevServicesUtils.createAndWatch(() -> {
             serviceResource.createOr(t -> t.patch());
-        }, () -> {
-            // Easiest way here to just recreate it instead of real checking, wheter it
-            // still exists
-            serviceResource.createOr(t -> t.patch());
-            return true;
-        },
+        }, () -> true, // Reapplying is fastest
                 // TODO: should the time interval be configurable?
                 10, TimeUnit.SECONDS);
+
+        if (p.isScaleDown()) {
+            // Scale down creation inside the cluster
+            K8sDevServicesUtils.createAndWatch(() -> {
+                Deployment deploy = k8sClient.apps().deployments()
+                        .inNamespace(config.namespace())
+                        .withName(p.getServiceName())
+                        .get();
+                if (deploy != null) {
+                    deploy.edit().editSpec().withReplicas(0).endSpec();
+                }
+                StatefulSet sts = k8sClient.apps().statefulSets()
+                        .inNamespace(config.namespace())
+                        .withName(p.getServiceName())
+                        .get();
+                if (sts != null) {
+                    sts.edit().editSpec().withReplicas(0).endSpec();
+                }
+            }, () -> true, // Reapplying is fastest
+                    10, TimeUnit.SECONDS);
+        }
 
         return null;
     }

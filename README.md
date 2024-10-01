@@ -223,7 +223,10 @@ portforwarding:
       service:
         port: 8080
         name: appb
+        scaleDown: true
 ```
+
+The option `service.scaleDown` in the reverseProxy will scale down a deployment or statefulset with the same name as the deployment. This might be helpful if the service is not allowed to run even if the service doesn't send any traffic to it, since it listens e.g. on a message broker.
 
 ### Handling different configuration when working with two apps
 

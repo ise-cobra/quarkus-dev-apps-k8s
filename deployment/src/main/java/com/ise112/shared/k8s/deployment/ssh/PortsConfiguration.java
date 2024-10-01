@@ -64,6 +64,11 @@ public class PortsConfiguration {
         private int localPort;
         private String serviceName;
         private int servicePort;
+        /**
+         * Defines, whether a deployment/statefulset with the same name should be scaled
+         * down if existent.
+         */
+        private boolean scaleDown;
 
         public String getJschString() {
             return localPort + ":localhost:" + localPort;
@@ -137,6 +142,10 @@ public class PortsConfiguration {
                             reverseProxy.localPort = getInt(e.path("localPort"));
                             reverseProxy.servicePort = getInt(e.path("service").path("port"));
                             reverseProxy.serviceName = getString(e.path("service").path("name"));
+                            reverseProxy.scaleDown = Optional.of(e.get("service"))
+                                    .map(p -> p.get("scaleDown"))
+                                    .map(p -> getBoolean(p))
+                                    .orElse(false);
                             return reverseProxy;
                         })
                         .filter(e -> e != null)
@@ -146,6 +155,10 @@ public class PortsConfiguration {
         PortsConfiguration portsConfiguration = new PortsConfiguration(portForwardings, reverseProxies);
 
         return portsConfiguration;
+    }
+
+    private static boolean getBoolean(JsonNode e) {
+        return Boolean.parseBoolean(getString(e));
     }
 
     private static int getInt(JsonNode e) {
@@ -166,7 +179,8 @@ public class PortsConfiguration {
             if (property.getRawValue() != null) {
                 value = value.replace(matcher.group(0), property.getValue());
             } else if (matcher.group(3) != null) {
-                System.out.println(MessageFormat.format("no key found for %s, return default value %s", key, matcher.group(3)));
+                System.out.println(
+                        MessageFormat.format("no key found for %s, return default value %s", key, matcher.group(3)));
                 return matcher.group(3);
             }
         }
