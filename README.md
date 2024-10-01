@@ -143,7 +143,7 @@ If a service inside of the cluster needs to communicate with your application, y
 ```yaml
 portforwarding:
   reverseProxy: 
-    - localPort: ${quarkus.http.port}
+    - localPort: ${quarkus.http.port:=8080}
       service:
         port: 8080
         name: quarkus-app

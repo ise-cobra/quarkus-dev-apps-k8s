@@ -3,6 +3,7 @@ package com.ise112.shared.k8s.deployment.ssh;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -157,13 +158,16 @@ public class PortsConfiguration {
      */
     private static String getString(JsonNode e) {
         String value = e.asText();
-        Pattern pattern = Pattern.compile("\\$\\{([\\w\\.-]+)\\}");
+        Pattern pattern = Pattern.compile("\\$\\{([\\w\\.-]+)(:=([^}]+))?\\}");
         Matcher matcher = pattern.matcher(value);
         while (matcher.find()) {
             String key = matcher.group(1);
             ConfigValue property = ConfigProvider.getConfig().getConfigValue(key);
             if (property.getRawValue() != null) {
                 value = value.replace(matcher.group(0), property.getValue());
+            } else if (matcher.group(3) != null) {
+                System.out.println(MessageFormat.format("no key found for %s, return default value %s", key, matcher.group(3)));
+                return matcher.group(3);
             }
         }
         return value;
