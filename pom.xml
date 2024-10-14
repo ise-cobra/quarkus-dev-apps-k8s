@@ -82,8 +82,8 @@
 
   <distributionManagement>
     <snapshotRepository>
-      <id>gitlab-maven</id>
-      <url>https://gitlab.ise-dev.de/api/v4/projects/292/packages/maven</url>
+      <id>github</id>
+      <url>https://maven.pkg.github.com/ise-cobra/quarkus-dev-apps-k8s</url>
     </snapshotRepository>
     <repository>
       <id>github</id>
