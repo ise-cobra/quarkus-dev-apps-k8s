@@ -1,4 +1,4 @@
-package com.ise112.shared.k8s.deployment.ssh;
+package com.iseonline.shared.k8s.deployment.ssh;
 
 import java.io.IOException;
 import java.nio.file.Files;

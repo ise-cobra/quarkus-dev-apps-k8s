@@ -8,7 +8,7 @@
     <version>16</version>
   </parent>
 
-  <groupId>com.ise112.quarkus</groupId>
+  <groupId>com.ise-online.quarkus</groupId>
   <artifactId>quarkus-dev-apps-k8s-parent</artifactId>
   <name>Quarkus Dev Apps K8s - Parent</name>
   <version>1.0.0-SNAPSHOT</version>
@@ -82,8 +82,8 @@
 
   <distributionManagement>
     <snapshotRepository>
-      <id>github</id>
-      <url>https://maven.pkg.github.com/ise-cobra/quarkus-dev-apps-k8s</url>
+      <id>gitlab-maven</id>
+      <url>https://gitlab.ise-dev.de/api/v4/projects/292/packages/maven</url>
     </snapshotRepository>
     <repository>
       <id>github</id>

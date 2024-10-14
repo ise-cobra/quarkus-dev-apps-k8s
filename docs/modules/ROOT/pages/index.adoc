@@ -6,14 +6,14 @@ TIP: Describe what the extension does here.
 
 == Installation
 
-If you want to use this extension, you need to add the `com.ise112.quarkus:quarkus-dev-apps-k8s-parent` extension first to your build file.
+If you want to use this extension, you need to add the `com.iseonline.quarkus:quarkus-dev-apps-k8s-parent` extension first to your build file.
 
 For instance, with Maven, add the following dependency to your POM file:
 
 [source,xml,subs=attributes+]
 ----
 <dependency>
-    <groupId>com.ise112.quarkus</groupId>
+    <groupId>com.iseonline.quarkus</groupId>
     <artifactId>quarkus-dev-apps-k8s-parent</artifactId>
     <version>{project-version}</version>
 </dependency>

@@ -1,4 +1,4 @@
-package com.ise112.shared.k8s.deployment;
+package com.iseonline.shared.k8s.deployment;
 
 import java.util.Optional;
 

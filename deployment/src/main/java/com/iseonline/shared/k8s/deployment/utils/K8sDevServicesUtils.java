@@ -1,4 +1,4 @@
-package com.ise112.shared.k8s.deployment.utils;
+package com.iseonline.shared.k8s.deployment.utils;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;

@@ -1,4 +1,4 @@
-package com.ise112.shared.k8s;
+package com.iseonline.shared.k8s;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;

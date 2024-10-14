@@ -1,4 +1,4 @@
-package com.ise112.shared.k8s.deployment.helm;
+package com.iseonline.shared.k8s.deployment.helm;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -17,9 +17,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Strings;
-import com.ise112.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
-import com.ise112.shared.k8s.deployment.ssh.SshDeployer;
-import com.ise112.shared.k8s.deployment.utils.K8sDevServicesUtils;
+import com.iseonline.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
+import com.iseonline.shared.k8s.deployment.ssh.SshDeployer;
+import com.iseonline.shared.k8s.deployment.utils.K8sDevServicesUtils;
 import com.marcnuri.helm.Helm;
 import com.marcnuri.helm.Release;
 

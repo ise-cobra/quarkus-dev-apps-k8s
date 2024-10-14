@@ -4,7 +4,7 @@ metadata:
   name: %s
   namespace: %s
   labels:
-    com.ise112.quarkus.k8s: reverseproxy
+    com.iseonline.quarkus.k8s: reverseproxy
 spec:
   selector:
     app: quarkus-dev-ssh

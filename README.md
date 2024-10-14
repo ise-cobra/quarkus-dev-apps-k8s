@@ -21,7 +21,7 @@ Add the dependency:
 
 ```xml
 <dependency>
-    <groupId>com.ise112.quarkus</groupId>
+    <groupId>com.ise-online.quarkus</groupId>
     <artifactId>quarkus-dev-apps-k8s</artifactId>
     <version>${version}</version>
 </dependency>

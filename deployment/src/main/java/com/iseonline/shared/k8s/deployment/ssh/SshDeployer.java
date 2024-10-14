@@ -1,4 +1,4 @@
-package com.ise112.shared.k8s.deployment.ssh;
+package com.iseonline.shared.k8s.deployment.ssh;
 
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
@@ -20,10 +20,10 @@ import java.util.stream.Stream;
 import org.apache.commons.io.IOUtils;
 import org.jboss.logging.Logger;
 
-import com.ise112.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
-import com.ise112.shared.k8s.deployment.ssh.PortsConfiguration.PortForwarding;
-import com.ise112.shared.k8s.deployment.ssh.PortsConfiguration.ReverseProxy;
-import com.ise112.shared.k8s.deployment.utils.K8sDevServicesUtils;
+import com.iseonline.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
+import com.iseonline.shared.k8s.deployment.ssh.PortsConfiguration.PortForwarding;
+import com.iseonline.shared.k8s.deployment.ssh.PortsConfiguration.ReverseProxy;
+import com.iseonline.shared.k8s.deployment.utils.K8sDevServicesUtils;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.Session;
