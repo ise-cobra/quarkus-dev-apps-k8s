@@ -96,7 +96,7 @@ public interface K8sDevServicesBuildTimeConfig {
     /**
      * The image of the ssh server to user
      */
-    @WithDefault("linuxserver/openssh-server:latest")
+    @WithDefault("linuxserver/openssh-server:9.7_p1-r4-ls173")
     String sshImage();
 
     /**

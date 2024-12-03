@@ -66,7 +66,7 @@ public class HelmDeployer implements Closeable {
             return devService.toBuildItem();
         }
         String profilesString = bst.getBuildSystemProps().getProperty("quarkus.profile");
-        profiles = profilesString.trim().split("\\s*,\\s*");
+        profiles = profilesString != null ? profilesString.trim().split("\\s*,\\s*") : new String[0];
 
         HelmDeployer.config = config;
         // We need our own kubeconfig.yaml definition, as this helm plugin cannot
@@ -234,6 +234,7 @@ public class HelmDeployer implements Closeable {
         upgrade.withKubeConfig(kubeConfigPath)
                 .withName(releaseName)
                 .withNamespace(config.namespace())
+                .resetValues()
                 .install()
                 .createNamespace()
                 // There is currently a bug which prevents the wait, resulting in the error
