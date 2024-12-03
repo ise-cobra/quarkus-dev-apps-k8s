@@ -8,7 +8,7 @@ import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
 import io.smallrye.config.WithName;
 
-@ConfigMapping(prefix = "ise.dev.k8s.devservices")
+@ConfigMapping(prefix = "quarkus.k8s.devservices")
 @ConfigRoot(phase = ConfigPhase.BUILD_TIME)
 public interface K8sDevServicesBuildTimeConfig {
 
@@ -21,17 +21,14 @@ public interface K8sDevServicesBuildTimeConfig {
     boolean enabled();
 
     /**
-     * If Dev Services for K8S has been explicitly enabled or disabled.
-     * Dev Services are generally enabled
-     * by default, unless there is an existing configuration present.
+     * The path to the root chart folder. Can either contain a chart directly
+     * or subfolders with charts.
      */
     @WithDefault("dev")
     String chartPath();
 
     /**
-     * If Dev Services for K8S has been explicitly enabled or disabled.
-     * Dev Services are generally enabled
-     * by default, unless there is an existing configuration present.
+     * The kube context to use. By default rancher-desktop.
      */
     @WithDefault("rancher-desktop")
     String kubeContext();

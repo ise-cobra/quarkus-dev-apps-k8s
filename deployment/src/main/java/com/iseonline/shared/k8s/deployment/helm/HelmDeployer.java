@@ -22,6 +22,7 @@ import com.iseonline.shared.k8s.deployment.ssh.SshDeployer;
 import com.iseonline.shared.k8s.deployment.utils.K8sDevServicesUtils;
 import com.marcnuri.helm.Helm;
 import com.marcnuri.helm.Release;
+import com.marcnuri.helm.UpgradeCommand;
 
 import io.fabric8.kubernetes.api.model.NamedContext;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
@@ -52,6 +53,8 @@ public class HelmDeployer implements Closeable {
 
     private static volatile RunningDevService devService;
 
+    private static volatile String[] profiles;
+
     @BuildStep
     public DevServicesResultBuildItem startServices(BuildSystemTargetBuildItem bst,
             K8sDevServicesBuildTimeConfig config) {
@@ -62,6 +65,9 @@ public class HelmDeployer implements Closeable {
             // currently no update of configuration implemented
             return devService.toBuildItem();
         }
+        String profilesString = bst.getBuildSystemProps().getProperty("quarkus.profile");
+        profiles = profilesString.trim().split("\\s*,\\s*");
+
         HelmDeployer.config = config;
         // We need our own kubeconfig.yaml definition, as this helm plugin cannot
         // specify the context to use
@@ -218,8 +224,14 @@ public class HelmDeployer implements Closeable {
         log.debugf("Time for dependency build for helmrelease %s: %d", releaseName,
                 (System.currentTimeMillis() - time));
         time = System.currentTimeMillis();
-        helm.upgrade()
-                .withKubeConfig(kubeConfigPath)
+        UpgradeCommand upgrade = helm.upgrade();
+        for (String profile : profiles) {
+            Path profileValuesFile = chartDir.resolve(String.format("values-%s.yaml", profile));
+            if (Files.exists(profileValuesFile)) {
+                upgrade.withValuesFile(profileValuesFile);
+            }
+        }
+        upgrade.withKubeConfig(kubeConfigPath)
                 .withName(releaseName)
                 .withNamespace(config.namespace())
                 .install()

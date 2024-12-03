@@ -1,1 +1,0 @@
-* xref:index.adoc[Quarkus Dev Apps K8s]

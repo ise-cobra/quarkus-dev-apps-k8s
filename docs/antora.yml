@@ -1,5 +1,0 @@
-name: quarkus-dev-apps-k8s
-title: Quarkus Dev Apps K8s
-version: dev
-nav:
-  - modules/ROOT/nav.adoc
