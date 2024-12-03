@@ -19,6 +19,6 @@ jobs:
           java-version: "21"
           distribution: "temurin"
       - name: Publish package
-        run: mvn --batch-mode deploy
+        run: mvn --batch-mode package
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
