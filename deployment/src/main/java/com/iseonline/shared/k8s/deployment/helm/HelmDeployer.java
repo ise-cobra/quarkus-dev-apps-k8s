@@ -5,6 +5,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
@@ -16,7 +18,6 @@ import org.jboss.logging.Logger;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Strings;
 import com.iseonline.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
 import com.iseonline.shared.k8s.deployment.ssh.SshDeployer;
 import com.iseonline.shared.k8s.deployment.utils.K8sDevServicesUtils;
@@ -38,6 +39,7 @@ import io.quarkus.deployment.builditem.DevServicesResultBuildItem;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem.RunningDevService;
 import io.quarkus.deployment.dev.devservices.GlobalDevServicesConfig;
 import io.quarkus.deployment.pkg.builditem.BuildSystemTargetBuildItem;
+import io.quarkus.runtime.util.StringUtil;
 
 @BuildSteps(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
 public class HelmDeployer implements Closeable {
@@ -48,6 +50,8 @@ public class HelmDeployer implements Closeable {
     private static final Logger log = Logger.getLogger(HelmDeployer.class);
 
     private static volatile K8sDevServicesBuildTimeConfig config;
+
+    private static volatile KubernetesClient k8sClient;
 
     private static volatile Path kubeConfigPath;
 
@@ -73,6 +77,18 @@ public class HelmDeployer implements Closeable {
         // specify the context to use
         kubeConfigPath = bst.getOutputDirectory().resolve("kubeconfig.yaml");
         saveKubeConfig(config.kubeContext(), kubeConfigPath);
+
+        if (k8sClient == null) {
+            Config k8sConfig = Config.autoConfigure(config.kubeContext());
+            // Nasty hack to avoid having the log be spammed with messages, if multiple
+            // configs are given in env variable, see
+            // https://github.com/fabric8io/kubernetes-client/issues/6240
+            // TODO: Fixed in fabric8, but quarkus must be updated to fabric8 7.0.0
+            k8sConfig.setAutoConfigure(false);
+            k8sClient = new KubernetesClientBuilder()
+                    .withConfig(k8sConfig)
+                    .build();
+        }
 
         Path chartsDir = Path.of(config.chartPath());
         try {
@@ -124,7 +140,7 @@ public class HelmDeployer implements Closeable {
      */
     private void installSecret() {
         String registrySecret = config.registrySecret().orElse(null);
-        if (Strings.isNullOrEmpty(registrySecret)) {
+        if (StringUtil.isNullOrEmpty(registrySecret)) {
             return;
         }
         Config k8sConfig = Config.autoConfigure(config.kubeContext());
@@ -159,7 +175,7 @@ public class HelmDeployer implements Closeable {
 
     private void helmRegistryLogin() {
         String registrySecret = config.registrySecret().orElse(null);
-        if (Strings.isNullOrEmpty(registrySecret)) {
+        if (StringUtil.isNullOrEmpty(registrySecret)) {
             return;
         }
         try {
@@ -219,11 +235,6 @@ public class HelmDeployer implements Closeable {
 
     private void upgradeDeployment(Path chartDir, String releaseName) {
         Helm helm = new Helm(chartDir);
-        long time = System.currentTimeMillis();
-        helm.dependency().update().call();
-        log.debugf("Time for dependency build for helmrelease %s: %d", releaseName,
-                (System.currentTimeMillis() - time));
-        time = System.currentTimeMillis();
         UpgradeCommand upgrade = helm.upgrade();
         for (String profile : profiles) {
             Path profileValuesFile = chartDir.resolve(String.format("values-%s.yaml", profile));
@@ -234,17 +245,49 @@ public class HelmDeployer implements Closeable {
         upgrade.withKubeConfig(kubeConfigPath)
                 .withName(releaseName)
                 .withNamespace(config.namespace())
-                .resetValues()
                 .install()
+                .dependencyUpdate()
                 .createNamespace()
                 // There is currently a bug which prevents the wait, resulting in the error
                 // "beginning wait for resources with timeout of 0s" and "client rate limiter
                 // would exceed context time".
-                // .waitReady()
+                .waitReady()
                 // .debug()
-                .call();
+                .resetValues();
 
-        log.debugf("Time for helm install for helmrelease %s: %d", releaseName, (System.currentTimeMillis() - time));
+        K8sDevServicesUtils.Retry(3, 0, () -> {
+            try {
+                upgrade.call();
+            } catch (Exception e) {
+                if (e.getMessage().contains("another operation (install/upgrade/rollback) is in progress")) {
+                    // As we should be the only ones deploying here, we assume this is an error. Simplest way is to
+                    // delete the corresponding helm secret. As this is only a dev environment, this should not be a problem.
+                    List<Release> releases = Helm.list()
+                            .withNamespace(config.namespace())
+                            .all()
+                            .call();
+                    releases.stream()
+                            .filter(r -> releaseName.equals(r.getName()))
+                            .map(hr -> "sh.helm.release.v1." + releaseName + ".v" + hr.getRevision())
+                            .map(secretName -> k8sClient.secrets()
+                                    .inNamespace(config.namespace())
+                                    .withName(secretName)
+                                    .get())
+                            .filter(secret -> secret != null
+                                    // Magic number: the old release must be at least 60 seconds old, to be sure
+                                    // that there really is no other process in progress.
+                                    // As we don't wait for the release with helm, this should be more than enough
+                                    // time.
+                                    && Instant.parse(secret.getMetadata().getCreationTimestamp())
+                                            .isBefore(Instant.now().minus(Duration.ofSeconds(60))))
+                            .forEach(secret -> k8sClient.secrets()
+                                    .inNamespace(config.namespace())
+                                    .withName(secret.getMetadata().getName())
+                                    .delete());
+                }
+                throw e;
+            }
+        });
     }
 
     private void waitForEverythingReady() {

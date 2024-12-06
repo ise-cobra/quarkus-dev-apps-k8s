@@ -11,7 +11,7 @@
   <groupId>com.ise-online.quarkus</groupId>
   <artifactId>quarkus-dev-apps-k8s-parent</artifactId>
   <name>Quarkus Dev Apps K8s - Parent</name>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.2-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <description>A Quarkus extension to start dependent services in a Kubernetes cluster during quarkus dev mode</description>
