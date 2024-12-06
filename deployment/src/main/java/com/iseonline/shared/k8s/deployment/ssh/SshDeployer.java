@@ -90,7 +90,7 @@ public class SshDeployer implements Closeable {
             // Nasty hack to avoid having the log be spammed with messages, if multiple
             // configs are given in env variable, see
             // https://github.com/fabric8io/kubernetes-client/issues/6240
-            // TODO: If above issue is fixed, this should be removed
+            // TODO: Fixed in fabric8, but quarkus must be updated to fabric8 7.0.0
             k8sConfig.setAutoConfigure(false);
             k8sClient = new KubernetesClientBuilder()
                     .withConfig(k8sConfig)
@@ -229,23 +229,10 @@ public class SshDeployer implements Closeable {
 
             // It can take quite some time before the ssh server is really ready to accept
             // connections, therefore retry some times...
-            int retryCount = 30;
-            for (int i = 0; i < retryCount && session == null; i++) {
-                try {
-                    createK8sTunnel(localSshPort);
-                    createSshSession(config, localSshPort);
-                } catch (Exception e) {
-                    if (i < retryCount - 1) {
-                        log.warnf("Tunnel to k8s cluster failed, retrying %d/%d", (i + 1), retryCount);
-                        try {
-                            Thread.sleep(1000);
-                        } catch (Exception e2) {
-                        }
-                    } else {
-                        throw new RuntimeException(e);
-                    }
-                }
-            }
+            K8sDevServicesUtils.Retry(60, 1000, () -> {
+                createK8sTunnel(localSshPort);
+                createSshSession(config, localSshPort);
+            });
 
             Map<String, String> overrideConfigs = new HashMap<>();
             List<Exception> errors = portsConfg.getPortForwardings().stream()
@@ -317,7 +304,7 @@ public class SshDeployer implements Closeable {
         }, 10, TimeUnit.SECONDS);
     }
 
-    private void createSshSession(K8sDevServicesBuildTimeConfig config, int localSshPort) throws JSchException {
+    private void createSshSession(K8sDevServicesBuildTimeConfig config, int localSshPort) throws RuntimeException {
         K8sDevServicesUtils.createAndWatch(() -> {
             closeSsh();
             log.infof("Connecting ssh on port %d", localSshPort);

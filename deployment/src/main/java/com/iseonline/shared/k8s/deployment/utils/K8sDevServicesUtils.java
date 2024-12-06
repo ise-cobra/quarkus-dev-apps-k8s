@@ -58,4 +58,23 @@ public class K8sDevServicesUtils {
             }
         }, period, period, unit);
     }
+
+    public static void Retry(int maxRetries, int backoff, Runnable retrieable) {
+        for (int i = 0; i < maxRetries; i++) {
+            try {
+                retrieable.run();
+                return;
+            } catch (Exception e) {
+                if (i < maxRetries - 1) {
+                    log.warnf("Retrying %d/%d", (i + 1), maxRetries);
+                    try {
+                        Thread.sleep(backoff);
+                    } catch (Exception e2) {
+                    }
+                } else {
+                    throw new RuntimeException("Backing off retry after " + maxRetries + " attempts", e);
+                }
+            }
+        }
+    }
 }
