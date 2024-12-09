@@ -6,15 +6,11 @@
   <parent>
     <groupId>com.ise-online.quarkus</groupId>
     <artifactId>quarkus-dev-apps-k8s-parent</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.2-SNAPSHOT</version>
   </parent>
   <artifactId>quarkus-dev-apps-k8s</artifactId>
   <name>Quarkus Dev Apps K8s Extension</name>
   <dependencies>
-    <dependency>
-      <groupId>io.quarkus</groupId>
-      <artifactId>quarkus-arc</artifactId>
-    </dependency>
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-smallrye-reactive-messaging</artifactId>
@@ -24,56 +20,8 @@
       <artifactId>quarkus-jackson</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.graalvm.sdk</groupId>
-      <artifactId>graal-sdk</artifactId>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>io.smallrye.reactive</groupId>
-      <artifactId>smallrye-reactive-messaging-otel</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.assertj</groupId>
-      <artifactId>assertj-core</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.module</groupId>
-      <artifactId>jackson-module-jsonSchema</artifactId>
-      <version>2.16.1</version>
-    </dependency>
-    <dependency>
-      <groupId>jakarta.validation</groupId>
-      <artifactId>jakarta.validation-api</artifactId>
-      <version>3.0.2</version>
-    </dependency>
-    <dependency>
-      <groupId>org.projectlombok</groupId>
-      <artifactId>lombok</artifactId>
-      <version>${lombok.version}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.google.protobuf</groupId>
-      <artifactId>protobuf-java</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>com.google.protobuf</groupId>
-      <artifactId>protobuf-java-util</artifactId>
-    </dependency>
-    <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-micrometer</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.reflections</groupId>
-      <artifactId>reflections</artifactId>
-      <version>0.9.12</version>
     </dependency>
   </dependencies>
   <build>
