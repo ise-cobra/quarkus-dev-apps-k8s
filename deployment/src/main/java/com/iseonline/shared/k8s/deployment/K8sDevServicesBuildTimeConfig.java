@@ -112,4 +112,13 @@ public interface K8sDevServicesBuildTimeConfig {
      */
     @WithDefault("quarkus-dev-apps")
     String sshPassword();
+
+    /**
+     * The directory, where the helm files should be cached. Note: Currently, the
+     * used helm library does not support setting the cache dir, therefore the
+     * cache files may exist temporarily in the basedir.
+     */
+    @WithDefault("target/helm-cache")
+    @WithName("helm.cache-path")
+    String helmCachePath();
 }

@@ -6,15 +6,11 @@
   <parent>
     <groupId>com.ise-online.quarkus</groupId>
     <artifactId>quarkus-dev-apps-k8s-parent</artifactId>
-    <version>0.1.2-SNAPSHOT</version>
+    <version>0.2.0-SNAPSHOT</version>
   </parent>
   <artifactId>quarkus-dev-apps-k8s</artifactId>
   <name>Quarkus Dev Apps K8s Extension</name>
   <dependencies>
-    <dependency>
-      <groupId>io.quarkus</groupId>
-      <artifactId>quarkus-smallrye-reactive-messaging</artifactId>
-    </dependency>
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-jackson</artifactId>

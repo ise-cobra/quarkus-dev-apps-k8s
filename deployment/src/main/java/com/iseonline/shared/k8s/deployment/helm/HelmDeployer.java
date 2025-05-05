@@ -1,10 +1,12 @@
 package com.iseonline.shared.k8s.deployment.helm;
 
 import java.io.Closeable;
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
@@ -12,14 +14,16 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.jboss.logging.Logger;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jdk8.WrappedIOException;
 import com.iseonline.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
-import com.iseonline.shared.k8s.deployment.ssh.SshDeployer;
 import com.iseonline.shared.k8s.deployment.utils.K8sDevServicesUtils;
 import com.marcnuri.helm.Helm;
 import com.marcnuri.helm.Release;
@@ -37,11 +41,11 @@ import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.BuildSteps;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem.RunningDevService;
-import io.quarkus.deployment.dev.devservices.GlobalDevServicesConfig;
+import io.quarkus.deployment.dev.devservices.DevServicesConfig;
 import io.quarkus.deployment.pkg.builditem.BuildSystemTargetBuildItem;
 import io.quarkus.runtime.util.StringUtil;
 
-@BuildSteps(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
+@BuildSteps(onlyIfNot = IsNormal.class, onlyIf = DevServicesConfig.Enabled.class)
 public class HelmDeployer implements Closeable {
     private static final String HELM_RELEASE_NAME = "quarkus-dev-k8s";
 
@@ -80,11 +84,6 @@ public class HelmDeployer implements Closeable {
 
         if (k8sClient == null) {
             Config k8sConfig = Config.autoConfigure(config.kubeContext());
-            // Nasty hack to avoid having the log be spammed with messages, if multiple
-            // configs are given in env variable, see
-            // https://github.com/fabric8io/kubernetes-client/issues/6240
-            // TODO: Fixed in fabric8, but quarkus must be updated to fabric8 7.0.0
-            k8sConfig.setAutoConfigure(false);
             k8sClient = new KubernetesClientBuilder()
                     .withConfig(k8sConfig)
                     .build();
@@ -103,12 +102,24 @@ public class HelmDeployer implements Closeable {
             if (Files.exists(chartsDir.resolve("Chart.yaml"))) {
                 upgradeDeployment(chartsDir, HELM_RELEASE_NAME);
             } else if (Files.exists(chartsDir)) {
-                Files.walk(chartsDir, 1)
+                List<Exception> exceptions = Files.walk(chartsDir, 1)
                         .filter(dir -> Files.exists(dir.resolve("Chart.yaml")))
                         .parallel()
-                        .forEach(dir -> upgradeDeployment(dir, dir.getFileName().toString()));
+                        .map(dir -> {
+                            try {
+                                upgradeDeployment(dir, dir.getFileName().toString());
+                            } catch (Exception e) {
+                                return e;
+                            }
+                            return null;
+                        })
+                        .filter(e -> e != null)
+                        .collect(Collectors.toList());
+
+                if (!exceptions.isEmpty()) {
+                    throw new RuntimeException("Helm deployment failed", exceptions.get(0));
+                }
             }
-            waitForEverythingReady();
 
             devService = new RunningDevService(FEATURE, null, this::close,
                     Collections.emptyMap());
@@ -218,7 +229,11 @@ public class HelmDeployer implements Closeable {
             throw new RuntimeException(e);
         }
         kubeConfig.setCurrentContext(kubeContext);
-        NamedContext currentContext = KubeConfigUtils.getCurrentContext(kubeConfig);
+        NamedContext currentContext = kubeConfig.getContexts().stream()
+                .filter(c -> Objects.equals(c.getName(), kubeContext))
+                .findAny()
+                .orElseThrow(() -> new IllegalArgumentException("No kube context named '" + kubeContext + "' exists"));
+
         kubeConfig.setContexts(Arrays.asList(currentContext));
         kubeConfig.setClusters(kubeConfig.getClusters().stream()
                 .filter(c -> Objects.equals(c.getName(), currentContext.getContext().getCluster()))
@@ -227,13 +242,13 @@ public class HelmDeployer implements Closeable {
                 .filter(u -> Objects.equals(u.getName(), currentContext.getContext().getUser()))
                 .toList());
         try {
-            KubeConfigUtils.persistKubeConfigIntoFile(kubeConfig, kubeConfigPath.toString());
+            KubeConfigUtils.persistKubeConfigIntoFile(kubeConfig, new File(kubeConfigPath.toString()));
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
-    private void upgradeDeployment(Path chartDir, String releaseName) {
+    private void upgradeDeployment(Path chartDir, String releaseName) throws IOException {
         Helm helm = new Helm(chartDir);
         UpgradeCommand upgrade = helm.upgrade();
         for (String profile : profiles) {
@@ -242,15 +257,16 @@ public class HelmDeployer implements Closeable {
                 upgrade.withValuesFile(profileValuesFile);
             }
         }
+
+        // Make sure, the dependencies are the same as in Chart.yaml
+        helmDependencyUpdate(helm);
         upgrade.withKubeConfig(kubeConfigPath)
                 .withName(releaseName)
                 .withNamespace(config.namespace())
                 .install()
-                .dependencyUpdate()
+                // This is not sufficicent, as this does not re-download updated dependencies
+                // .dependencyUpdate()
                 .createNamespace()
-                // There is currently a bug which prevents the wait, resulting in the error
-                // "beginning wait for resources with timeout of 0s" and "client rate limiter
-                // would exceed context time".
                 .waitReady()
                 // .debug()
                 .resetValues();
@@ -260,8 +276,10 @@ public class HelmDeployer implements Closeable {
                 upgrade.call();
             } catch (Exception e) {
                 if (e.getMessage().contains("another operation (install/upgrade/rollback) is in progress")) {
-                    // As we should be the only ones deploying here, we assume this is an error. Simplest way is to
-                    // delete the corresponding helm secret. As this is only a dev environment, this should not be a problem.
+                    // As we should be the only ones deploying here, we assume this is an error.
+                    // Simplest way is to
+                    // delete the corresponding helm secret. As this is only a dev environment, this
+                    // should not be a problem.
                     List<Release> releases = Helm.list()
                             .withNamespace(config.namespace())
                             .all()
@@ -290,19 +308,40 @@ public class HelmDeployer implements Closeable {
         });
     }
 
-    private void waitForEverythingReady() {
-        Config k8sConfig = Config.autoConfigure(config.kubeContext());
-        try (KubernetesClient k8sClient = new KubernetesClientBuilder()
-                .withConfig(k8sConfig)
-                .build()) {
-            // Wait till all pods in the namespace are ready, since helm waitReady is
-            // currently not working
-            K8sDevServicesUtils.waitTill(5 * 60000, () -> k8sClient.pods()
-                    .inNamespace(config.namespace())
-                    .resources()
-                    .filter(p -> (p.item().getMetadata().getLabels().get("app") != SshDeployer.SSH_DEPLOYMENT_NAME))
-                    .allMatch(p -> p.isReady()));
+    /**
+     * The used helm library does not support, to set the path for the helm manager
+     * cache.
+     * As we don't want to have them in the project main dir, we have to move them
+     * manually
+     * before and afterwards.
+     */
+    private void helmDependencyUpdate(Helm helm) throws IOException {
+        Path cachepath = Path.of(config.helmCachePath());
+        Path basepath = Path.of(".");
+        Files.createDirectories(cachepath);
+        try {
+            moveFiles(cachepath, basepath);
+            // The helm repo update is
+            // Helm.repo().update().call();
+            helm.dependency().update().call();
+        } finally {
+            moveFiles(basepath, cachepath);
         }
+    }
+
+    private static final Pattern HELM_MANAGER_FILES = Pattern.compile("helm-manager-.+\\.(txt|yaml)");
+
+    private void moveFiles(Path source, Path target) throws IOException {
+        Files.list(source)
+                .filter(path -> HELM_MANAGER_FILES.matcher(path.getFileName().toString()).matches())
+                .forEach(path -> {
+                    Path targetPath = target.resolve(path.getFileName());
+                    try {
+                        Files.move(path, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                    } catch (IOException e) {
+                        throw new WrappedIOException(e);
+                    }
+                });
     }
 
     private void uninstall() {
