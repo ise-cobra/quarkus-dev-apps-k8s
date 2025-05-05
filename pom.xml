@@ -5,13 +5,13 @@
   <parent>
     <groupId>io.quarkiverse</groupId>
     <artifactId>quarkiverse-parent</artifactId>
-    <version>16</version>
+    <version>20</version>
   </parent>
 
   <groupId>com.ise-online.quarkus</groupId>
   <artifactId>quarkus-dev-apps-k8s-parent</artifactId>
   <name>Quarkus Dev Apps K8s - Parent</name>
-  <version>0.1.2-SNAPSHOT</version>
+  <version>0.2.0-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <description>A Quarkus extension to start dependent services in a Kubernetes cluster during quarkus dev mode</description>
@@ -54,7 +54,7 @@
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <quarkus.version>3.14.2</quarkus.version>
+    <quarkus.version>3.20.0</quarkus.version>
 
     <smallrye-connector-attribute-processor.version>4.18.0</smallrye-connector-attribute-processor.version>
     <smallrye-reactive-messaging-otel.version>4.18.0</smallrye-reactive-messaging-otel.version>

@@ -50,9 +50,9 @@ import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.BuildSteps;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem.RunningDevService;
-import io.quarkus.deployment.dev.devservices.GlobalDevServicesConfig;
+import io.quarkus.deployment.dev.devservices.DevServicesConfig;
 
-@BuildSteps(onlyIfNot = IsNormal.class, onlyIf = GlobalDevServicesConfig.Enabled.class)
+@BuildSteps(onlyIfNot = IsNormal.class, onlyIf = DevServicesConfig.Enabled.class)
 public class SshDeployer implements Closeable {
     private static final Logger log = Logger.getLogger(SshDeployer.class);
 
@@ -87,11 +87,6 @@ public class SshDeployer implements Closeable {
 
         if (k8sClient == null) {
             Config k8sConfig = Config.autoConfigure(config.kubeContext());
-            // Nasty hack to avoid having the log be spammed with messages, if multiple
-            // configs are given in env variable, see
-            // https://github.com/fabric8io/kubernetes-client/issues/6240
-            // TODO: Fixed in fabric8, but quarkus must be updated to fabric8 7.0.0
-            k8sConfig.setAutoConfigure(false);
             k8sClient = new KubernetesClientBuilder()
                     .withConfig(k8sConfig)
                     .build();
