@@ -27,22 +27,6 @@
     </dependency>
 
     <dependency>
-      <groupId>org.bouncycastle</groupId>
-      <artifactId>bcpkix-jdk15on</artifactId>
-      <version>1.69</version>
-    </dependency>
-    <dependency>
-      <groupId>org.bouncycastle</groupId>
-      <artifactId>bcprov-jdk15on</artifactId>
-      <version>1.69</version>
-    </dependency>
-    <dependency>
-      <groupId>org.bouncycastle</groupId>
-      <artifactId>bcprov-ext-jdk15on</artifactId>
-      <version>1.69</version>
-    </dependency>
-
-    <dependency>
       <groupId>com.ise-online.quarkus</groupId>
       <artifactId>quarkus-dev-apps-k8s</artifactId>
       <version>${project.version}</version>
