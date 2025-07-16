@@ -215,9 +215,9 @@ public class HelmDeployer implements Closeable {
      * Helm requires a kubeconfig file and can't set a kube context here. Therefore
      * we must export the required kube context into a file and load it from there.
      *
-     * @param kubeContext the kubernetes context to use
+     * @param kubeContext    the kubernetes context to use
      * @param kubeConfigPath path to which the kubernetes config should be written
-     * @param config the kubernetes config read by fabric8
+     * @param config         the kubernetes config read by fabric8
      */
     private void saveKubeConfig(String kubeContext, Path kubeConfigPath) {
 
@@ -315,7 +315,7 @@ public class HelmDeployer implements Closeable {
      * manually
      * before and afterwards.
      */
-    private void helmDependencyUpdate(Helm helm) throws IOException {
+    private synchronized void helmDependencyUpdate(Helm helm) throws IOException {
         Path cachepath = Path.of(config.helmCachePath());
         Path basepath = Path.of(".");
         Files.createDirectories(cachepath);
@@ -339,7 +339,8 @@ public class HelmDeployer implements Closeable {
                     try {
                         Files.move(path, targetPath, StandardCopyOption.REPLACE_EXISTING);
                     } catch (IOException e) {
-                        throw new WrappedIOException(e);
+                        log.warnf("Could not move helm manager file %s -> %s, error was: %s", path, targetPath,
+                                e.getMessage());
                     }
                 });
     }
