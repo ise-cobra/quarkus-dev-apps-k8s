@@ -259,7 +259,7 @@ public class HelmDeployer implements Closeable {
         }
 
         // Make sure, the dependencies are the same as in Chart.yaml
-        helmDependencyUpdate(helm);
+        helmDependencyBuild(helm);
         upgrade.withKubeConfig(kubeConfigPath)
                 .withName(releaseName)
                 .withNamespace(config.namespace())
@@ -315,7 +315,7 @@ public class HelmDeployer implements Closeable {
      * manually
      * before and afterwards.
      */
-    private synchronized void helmDependencyUpdate(Helm helm) throws IOException {
+    private synchronized void helmDependencyBuild(Helm helm) throws IOException {
         Path cachepath = Path.of(config.helmCachePath());
         Path basepath = Path.of(".");
         Files.createDirectories(cachepath);
@@ -323,7 +323,7 @@ public class HelmDeployer implements Closeable {
             moveFiles(cachepath, basepath);
             // The helm repo update is
             // Helm.repo().update().call();
-            helm.dependency().update().call();
+            helm.dependency().build().call();
         } finally {
             moveFiles(basepath, cachepath);
         }
