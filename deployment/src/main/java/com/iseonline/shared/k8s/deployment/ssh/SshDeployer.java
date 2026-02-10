@@ -45,14 +45,13 @@ import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.Resource;
 import io.fabric8.kubernetes.client.dsl.RollableScalableResource;
 import io.fabric8.kubernetes.client.dsl.ServiceResource;
-import io.quarkus.deployment.IsNormal;
+import io.quarkus.deployment.IsProduction;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.BuildSteps;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem;
-import io.quarkus.deployment.builditem.DevServicesResultBuildItem.RunningDevService;
 import io.quarkus.deployment.dev.devservices.DevServicesConfig;
 
-@BuildSteps(onlyIfNot = IsNormal.class, onlyIf = DevServicesConfig.Enabled.class)
+@BuildSteps(onlyIfNot = IsProduction.class, onlyIf = DevServicesConfig.Enabled.class)
 public class SshDeployer implements Closeable {
     private static final Logger log = Logger.getLogger(SshDeployer.class);
 
@@ -64,7 +63,7 @@ public class SshDeployer implements Closeable {
 
     private static volatile KubernetesClient k8sClient;
 
-    private static volatile RunningDevService devService;
+    private static volatile DevServicesResultBuildItem devService;
 
     private static volatile Session session = null;
 
@@ -81,7 +80,7 @@ public class SshDeployer implements Closeable {
         }
         if (devService != null) {
             // currently no update of configuration implemented
-            return devService.toBuildItem();
+            return devService;
         }
         SshDeployer.config = config;
 
@@ -95,9 +94,9 @@ public class SshDeployer implements Closeable {
         deploySsh();
         Map<String, String> overrideConfigs = connectSSH();
 
-        devService = new RunningDevService(FEATURE, null, this::close, overrideConfigs);
+        devService = DevServicesResultBuildItem.discovered().name(FEATURE).config(overrideConfigs).build();
 
-        return devService.toBuildItem();
+        return devService;
     }
 
     @Override

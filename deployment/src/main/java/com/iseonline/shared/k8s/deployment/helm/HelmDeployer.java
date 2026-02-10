@@ -12,19 +12,22 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.jboss.logging.Logger;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jdk8.WrappedIOException;
 import com.iseonline.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
 import com.iseonline.shared.k8s.deployment.utils.K8sDevServicesUtils;
+import com.marcnuri.helm.DependencyListResult;
 import com.marcnuri.helm.Helm;
 import com.marcnuri.helm.Release;
 import com.marcnuri.helm.UpgradeCommand;
@@ -36,16 +39,15 @@ import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import io.fabric8.kubernetes.client.internal.KubeConfigUtils;
-import io.quarkus.deployment.IsNormal;
+import io.quarkus.deployment.IsProduction;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.BuildSteps;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem;
-import io.quarkus.deployment.builditem.DevServicesResultBuildItem.RunningDevService;
 import io.quarkus.deployment.dev.devservices.DevServicesConfig;
 import io.quarkus.deployment.pkg.builditem.BuildSystemTargetBuildItem;
 import io.quarkus.runtime.util.StringUtil;
 
-@BuildSteps(onlyIfNot = IsNormal.class, onlyIf = DevServicesConfig.Enabled.class)
+@BuildSteps(onlyIfNot = IsProduction.class, onlyIf = DevServicesConfig.Enabled.class)
 public class HelmDeployer implements Closeable {
     private static final String HELM_RELEASE_NAME = "quarkus-dev-k8s";
 
@@ -59,19 +61,19 @@ public class HelmDeployer implements Closeable {
 
     private static volatile Path kubeConfigPath;
 
-    private static volatile RunningDevService devService;
+    private static volatile DevServicesResultBuildItem devService;
 
     private static volatile String[] profiles;
 
     @BuildStep
     public DevServicesResultBuildItem startServices(BuildSystemTargetBuildItem bst,
             K8sDevServicesBuildTimeConfig config) {
-        if (!config.enabled()) {
+        if (!config.enabled() || !config.helmEnabled()) {
             return null;
         }
         if (devService != null) {
             // currently no update of configuration implemented
-            return devService.toBuildItem();
+            return devService;
         }
         String profilesString = bst.getBuildSystemProps().getProperty("quarkus.profile");
         profiles = profilesString != null ? profilesString.trim().split("\\s*,\\s*") : new String[0];
@@ -108,8 +110,10 @@ public class HelmDeployer implements Closeable {
                         .map(dir -> {
                             try {
                                 upgradeDeployment(dir, dir.getFileName().toString());
+                                log.infof("Helm Deployment ready: %s", dir.getFileName());
                             } catch (Exception e) {
-                                return e;
+                                log.infof("Helm Deployment failed: %s", dir.getFileName());
+                                return new RuntimeException("Helm Deployment '" + dir.getFileName() + "' failed", e);
                             }
                             return null;
                         })
@@ -121,9 +125,8 @@ public class HelmDeployer implements Closeable {
                 }
             }
 
-            devService = new RunningDevService(FEATURE, null, this::close,
-                    Collections.emptyMap());
-            return devService.toBuildItem();
+            devService = DevServicesResultBuildItem.discovered().name(FEATURE).config(Collections.emptyMap()).build();
+            return devService;
         } catch (IOException e) {
             log.warnf(e, "Could not check charts dir %s", config.chartPath());
             throw new RuntimeException(e);
@@ -195,7 +198,7 @@ public class HelmDeployer implements Closeable {
             if (auths == null) {
                 throw new RuntimeException("No \"auths\" field found in registry secret");
             }
-            auths.fields().forEachRemaining(auth -> {
+            auths.properties().forEach(auth -> {
                 String host = auth.getKey();
                 JsonNode value = auth.getValue();
                 String username = value.get("username") != null ? value.get("username").asText() : null;
@@ -249,6 +252,7 @@ public class HelmDeployer implements Closeable {
     }
 
     private void upgradeDeployment(Path chartDir, String releaseName) throws IOException {
+        log.infof("Updating Helm Deployment '%s'...", chartDir.getFileName());
         Helm helm = new Helm(chartDir);
         UpgradeCommand upgrade = helm.upgrade();
         for (String profile : profiles) {
@@ -259,7 +263,7 @@ public class HelmDeployer implements Closeable {
         }
 
         // Make sure, the dependencies are the same as in Chart.yaml
-        helmDependencyUpdate(helm);
+        helmDependencyUpdate(chartDir, helm);
         upgrade.withKubeConfig(kubeConfigPath)
                 .withName(releaseName)
                 .withNamespace(config.namespace())
@@ -308,6 +312,10 @@ public class HelmDeployer implements Closeable {
         });
     }
 
+    private static final Object stateLock = new Object();
+    private static final Object executionLock = new Object();
+    private static final AtomicInteger activeCount = new AtomicInteger(0);
+
     /**
      * The used helm library does not support, to set the path for the helm manager
      * cache.
@@ -315,17 +323,47 @@ public class HelmDeployer implements Closeable {
      * manually
      * before and afterwards.
      */
-    private synchronized void helmDependencyUpdate(Helm helm) throws IOException {
+    private void helmDependencyUpdate(Path chartDir, Helm helm) throws IOException {
         Path cachepath = Path.of(config.helmCachePath());
         Path basepath = Path.of(".");
-        Files.createDirectories(cachepath);
+
+        DependencyListResult listResult = helm.dependency().list().call();
+        boolean hasOutdated = listResult.getDependencies()
+                .stream().anyMatch(dep -> !Objects.equals(dep.getStatus(), "ok"));
+        if (!hasOutdated) {
+            return;
+        }
+
+        // Work with a counter here, so the cache files are not moved if another thread still needs them
+        int count = activeCount.getAndIncrement();
         try {
-            moveFiles(cachepath, basepath);
-            // The helm repo update is
-            // Helm.repo().update().call();
-            helm.dependency().update().call();
+            synchronized (stateLock) {
+                if (count == 0) {
+                    Files.createDirectories(cachepath);
+                    moveFiles(cachepath, basepath);
+                }
+            }
+
+            // cleanup chart dependencies dir before we update it
+            Path chartDependenciesDir = chartDir.resolve("charts");
+            if (Files.exists(chartDependenciesDir)) {
+                try (Stream<Path> paths = Files.walk(chartDependenciesDir)) {
+                    paths.sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
+                }
+            }
+
+            // Execution lock required, because all helm commands work on the same cache files
+            synchronized (executionLock) {
+                helm.dependency().update().call();
+            }
+
         } finally {
-            moveFiles(basepath, cachepath);
+            int remaining = activeCount.decrementAndGet();
+            synchronized (stateLock) {
+                if (remaining == 0) {
+                    moveFiles(basepath, cachepath);
+                }
+            }
         }
     }
 
