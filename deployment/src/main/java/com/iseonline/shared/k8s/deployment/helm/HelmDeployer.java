@@ -12,10 +12,12 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.jboss.logging.Logger;
 
@@ -24,6 +26,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iseonline.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
 import com.iseonline.shared.k8s.deployment.utils.K8sDevServicesUtils;
+import com.marcnuri.helm.DependencyListResult;
 import com.marcnuri.helm.Helm;
 import com.marcnuri.helm.Release;
 import com.marcnuri.helm.UpgradeCommand;
@@ -106,8 +109,10 @@ public class HelmDeployer implements Closeable {
                         .map(dir -> {
                             try {
                                 upgradeDeployment(dir, dir.getFileName().toString());
+                                log.infof("Helm Deployment ready: %s", dir.getFileName());
                             } catch (Exception e) {
-                                return e;
+                                log.infof("Helm Deployment failed: %s", dir.getFileName());
+                                return new RuntimeException("Helm Deployment '" + dir.getFileName() + "' failed", e);
                             }
                             return null;
                         })
@@ -119,7 +124,7 @@ public class HelmDeployer implements Closeable {
                 }
             }
 
-            devService = DevServicesResultBuildItem.discovered().name(FEATURE).build();
+            devService = DevServicesResultBuildItem.discovered().name(FEATURE).config(Collections.emptyMap()).build();
             return devService;
         } catch (IOException e) {
             log.warnf(e, "Could not check charts dir %s", config.chartPath());
@@ -246,6 +251,7 @@ public class HelmDeployer implements Closeable {
     }
 
     private void upgradeDeployment(Path chartDir, String releaseName) throws IOException {
+        log.infof("Updating Helm Deployment '%s'...", chartDir.getFileName());
         Helm helm = new Helm(chartDir);
         UpgradeCommand upgrade = helm.upgrade();
         for (String profile : profiles) {
@@ -256,7 +262,7 @@ public class HelmDeployer implements Closeable {
         }
 
         // Make sure, the dependencies are the same as in Chart.yaml
-        helmDependencyUpdate(helm);
+        helmDependencyUpdate(chartDir, helm);
         upgrade.withKubeConfig(kubeConfigPath)
                 .withName(releaseName)
                 .withNamespace(config.namespace())
@@ -305,6 +311,10 @@ public class HelmDeployer implements Closeable {
         });
     }
 
+    private static final Object stateLock = new Object();
+    private static final Object executionLock = new Object();
+    private static int activeCount = 0;
+
     /**
      * The used helm library does not support, to set the path for the helm manager
      * cache.
@@ -312,17 +322,42 @@ public class HelmDeployer implements Closeable {
      * manually
      * before and afterwards.
      */
-    private synchronized void helmDependencyUpdate(Helm helm) throws IOException {
+    private void helmDependencyUpdate(Path chartDir, Helm helm) throws IOException {
         Path cachepath = Path.of(config.helmCachePath());
         Path basepath = Path.of(".");
-        Files.createDirectories(cachepath);
+
+        DependencyListResult listResult = helm.dependency().list().call();
+        boolean hasOutdated = listResult.getDependencies()
+                .stream().anyMatch(dep -> !Objects.equals(dep.getStatus(), "ok"));
+        if (!hasOutdated) {
+            return;
+        }
+
+        synchronized (stateLock) {
+            if (activeCount == 0) {
+                Files.createDirectories(cachepath);
+                moveFiles(cachepath, basepath);
+            }
+            activeCount++;
+        }
+
         try {
-            moveFiles(cachepath, basepath);
-            // The helm repo update is
-            // Helm.repo().update().call();
-            helm.dependency().update().call();
+            // cleanup chart dependencies dir before we update it
+            Path chartDependenciesDir = chartDir.resolve("charts");
+            try (Stream<Path> paths = Files.walk(chartDependenciesDir)) {
+                paths.sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
+            }
+            synchronized (executionLock) {
+                helm.dependency().update().call();
+            }
+
         } finally {
-            moveFiles(basepath, cachepath);
+            synchronized (stateLock) {
+                activeCount--;
+                if (activeCount == 0) {
+                    moveFiles(basepath, cachepath);
+                }
+            }
         }
     }
 
