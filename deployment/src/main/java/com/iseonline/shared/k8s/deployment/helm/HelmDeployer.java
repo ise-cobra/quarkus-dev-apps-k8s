@@ -22,7 +22,6 @@ import org.jboss.logging.Logger;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jdk8.WrappedIOException;
 import com.iseonline.shared.k8s.deployment.K8sDevServicesBuildTimeConfig;
 import com.iseonline.shared.k8s.deployment.utils.K8sDevServicesUtils;
 import com.marcnuri.helm.Helm;
@@ -36,16 +35,15 @@ import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import io.fabric8.kubernetes.client.internal.KubeConfigUtils;
-import io.quarkus.deployment.IsNormal;
+import io.quarkus.deployment.IsProduction;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.BuildSteps;
 import io.quarkus.deployment.builditem.DevServicesResultBuildItem;
-import io.quarkus.deployment.builditem.DevServicesResultBuildItem.RunningDevService;
 import io.quarkus.deployment.dev.devservices.DevServicesConfig;
 import io.quarkus.deployment.pkg.builditem.BuildSystemTargetBuildItem;
 import io.quarkus.runtime.util.StringUtil;
 
-@BuildSteps(onlyIfNot = IsNormal.class, onlyIf = DevServicesConfig.Enabled.class)
+@BuildSteps(onlyIfNot = IsProduction.class, onlyIf = DevServicesConfig.Enabled.class)
 public class HelmDeployer implements Closeable {
     private static final String HELM_RELEASE_NAME = "quarkus-dev-k8s";
 
@@ -59,19 +57,19 @@ public class HelmDeployer implements Closeable {
 
     private static volatile Path kubeConfigPath;
 
-    private static volatile RunningDevService devService;
+    private static volatile DevServicesResultBuildItem devService;
 
     private static volatile String[] profiles;
 
     @BuildStep
     public DevServicesResultBuildItem startServices(BuildSystemTargetBuildItem bst,
             K8sDevServicesBuildTimeConfig config) {
-        if (!config.enabled()) {
+        if (!config.enabled() || !config.helmEnabled()) {
             return null;
         }
         if (devService != null) {
             // currently no update of configuration implemented
-            return devService.toBuildItem();
+            return devService;
         }
         String profilesString = bst.getBuildSystemProps().getProperty("quarkus.profile");
         profiles = profilesString != null ? profilesString.trim().split("\\s*,\\s*") : new String[0];
@@ -121,9 +119,8 @@ public class HelmDeployer implements Closeable {
                 }
             }
 
-            devService = new RunningDevService(FEATURE, null, this::close,
-                    Collections.emptyMap());
-            return devService.toBuildItem();
+            devService = DevServicesResultBuildItem.discovered().name(FEATURE).build();
+            return devService;
         } catch (IOException e) {
             log.warnf(e, "Could not check charts dir %s", config.chartPath());
             throw new RuntimeException(e);
@@ -195,7 +192,7 @@ public class HelmDeployer implements Closeable {
             if (auths == null) {
                 throw new RuntimeException("No \"auths\" field found in registry secret");
             }
-            auths.fields().forEachRemaining(auth -> {
+            auths.properties().forEach(auth -> {
                 String host = auth.getKey();
                 JsonNode value = auth.getValue();
                 String username = value.get("username") != null ? value.get("username").asText() : null;
@@ -215,9 +212,9 @@ public class HelmDeployer implements Closeable {
      * Helm requires a kubeconfig file and can't set a kube context here. Therefore
      * we must export the required kube context into a file and load it from there.
      *
-     * @param kubeContext    the kubernetes context to use
+     * @param kubeContext the kubernetes context to use
      * @param kubeConfigPath path to which the kubernetes config should be written
-     * @param config         the kubernetes config read by fabric8
+     * @param config the kubernetes config read by fabric8
      */
     private void saveKubeConfig(String kubeContext, Path kubeConfigPath) {
 
