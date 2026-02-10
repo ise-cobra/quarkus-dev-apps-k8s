@@ -335,7 +335,7 @@ public class HelmDeployer implements Closeable {
         }
 
         // Work with a counter here, so the cache files are not moved if another thread still needs them
-        int count = activeCount.incrementAndGet();
+        int count = activeCount.getAndIncrement();
         try {
             synchronized (stateLock) {
                 if (count == 0) {
