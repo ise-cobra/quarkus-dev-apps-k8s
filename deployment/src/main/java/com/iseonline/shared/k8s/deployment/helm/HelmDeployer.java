@@ -15,6 +15,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -217,9 +218,9 @@ public class HelmDeployer implements Closeable {
      * Helm requires a kubeconfig file and can't set a kube context here. Therefore
      * we must export the required kube context into a file and load it from there.
      *
-     * @param kubeContext the kubernetes context to use
+     * @param kubeContext    the kubernetes context to use
      * @param kubeConfigPath path to which the kubernetes config should be written
-     * @param config the kubernetes config read by fabric8
+     * @param config         the kubernetes config read by fabric8
      */
     private void saveKubeConfig(String kubeContext, Path kubeConfigPath) {
 
@@ -313,7 +314,7 @@ public class HelmDeployer implements Closeable {
 
     private static final Object stateLock = new Object();
     private static final Object executionLock = new Object();
-    private static int activeCount = 0;
+    private static final AtomicInteger activeCount = new AtomicInteger(0);
 
     /**
      * The used helm library does not support, to set the path for the helm manager
@@ -333,28 +334,33 @@ public class HelmDeployer implements Closeable {
             return;
         }
 
-        synchronized (stateLock) {
-            if (activeCount == 0) {
-                Files.createDirectories(cachepath);
-                moveFiles(cachepath, basepath);
-            }
-            activeCount++;
-        }
-
+        // Work with a counter here, so the cache files are not moved if another thread still needs them
+        int count = activeCount.incrementAndGet();
         try {
+            synchronized (stateLock) {
+                if (count == 0) {
+                    Files.createDirectories(cachepath);
+                    moveFiles(cachepath, basepath);
+                }
+            }
+
             // cleanup chart dependencies dir before we update it
             Path chartDependenciesDir = chartDir.resolve("charts");
-            try (Stream<Path> paths = Files.walk(chartDependenciesDir)) {
-                paths.sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
+            if (Files.exists(chartDependenciesDir)) {
+                try (Stream<Path> paths = Files.walk(chartDependenciesDir)) {
+                    paths.sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
+                }
             }
+
+            // Execution lock required, because all helm commands work on the same cache files
             synchronized (executionLock) {
                 helm.dependency().update().call();
             }
 
         } finally {
+            int remaining = activeCount.decrementAndGet();
             synchronized (stateLock) {
-                activeCount--;
-                if (activeCount == 0) {
+                if (remaining == 0) {
                     moveFiles(basepath, cachepath);
                 }
             }
